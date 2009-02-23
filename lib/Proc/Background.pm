@@ -142,6 +142,9 @@ sub new {
 sub DESTROY {
   my $self = shift;
   if ($self->{_die_upon_destroy}) {
+    # During a mainline exit() $? is the prospective exit code from the
+    # parent program. Preserve it across any waitpid() in die()
+    local $?;
     $self->die;
     delete $Proc::Background::_die_upon_destroy{$self+0};
   }
