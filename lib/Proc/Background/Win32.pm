@@ -41,11 +41,14 @@ sub _new {
   # protected stay protected.  Then convert unquoted "'s into \"'s.
   # Finally, check for whitespace and protect it.
   my @args;
+  my $exe;
   if (@_ == 1) {
     @args = split(' ', $_[0]);
+    $exe = $args[0];
   } else {
     @args = @_;
-    for (my $i=1; $i<@args; ++$i) {
+    $exe = $args[0];
+    for (my $i=0; $i<@args; ++$i) {
       my $arg = $args[$i];
       $arg =~ s#\\\\#\200#g;
       $arg =~ s#\\"#\201#g;
@@ -64,8 +67,8 @@ sub _new {
   # Win32::Process::Create cannot start a process when the full
   # pathname has a space in it, convert the full pathname to the
   # Windows short 8.3 format which contains no spaces.
-  $args[0] = Proc::Background::_resolve_path($args[0]) or return;
-  $args[0] = Win32::GetShortPathName($args[0]);
+  $exe = Proc::Background::_resolve_path($exe) or return;
+  $exe = Win32::GetShortPathName($exe);
 
   my $self = bless {}, $class;
 
@@ -75,7 +78,7 @@ sub _new {
 
   # Create the process.
   if (Win32::Process::Create($os_obj,
-			     $args[0],
+			     $exe,
 			     "@args",
 			     0,
 			     NORMAL_PRIORITY_CLASS,
