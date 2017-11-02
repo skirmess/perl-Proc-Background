@@ -93,10 +93,10 @@ sub _new {
 
 # Reap the child.
 sub _waitpid {
-  my ($self, $timeout) = @_;
+  my ($self, $infinite, $wait_seconds) = @_;
 
   # Try to wait on the process.
-  my $result = $self->{_os_obj}->Wait($timeout ? INFINITE : 0);
+  my $result = $self->{_os_obj}->Wait($infinite ? INFINITE : $wait_seconds? int($wait_seconds * 1000) : 0);
   # Process finished.  Grab the exit value.
   if ($result == 1) {
     my $_exit_status;

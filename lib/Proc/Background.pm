@@ -14,7 +14,7 @@ use Cwd;
 use vars qw(@ISA $VERSION @EXPORT_OK);
 @ISA       = qw(Exporter);
 @EXPORT_OK = qw(timeout_system);
-$VERSION   = sprintf '%d.%02d', '$Revision: 1.10 $' =~ /(\d+)\.(\d+)/;
+$VERSION   = sprintf '%d.%02d', '$Revision: 1.11 $' =~ /(\d+)\.(\d+)/;
 
 # Determine if the operating system is Windows.
 my $is_windows = $^O eq 'MSWin32';
@@ -140,15 +140,14 @@ sub DESTROY {
   }
 }
 
-# Reap the child.  If the first argument is 0 the wait should return
-# immediately, 1 if it should wait forever.  If this number is
-# non-zero, then wait.  If the wait was sucessful, then delete
+# Reap the child.  If the first argument is 1 then it should wait forever.
+# Else, the second argument specifies the number of seconds to wait.
+# If the wait was sucessful, then delete
 # $self->{_os_obj} and set $self->{_exit_value} to the OS specific
 # class return of _reap.  Return 1 if we sucessfully waited, 0
 # otherwise.
 sub _reap {
-  my $self    = shift;
-  my $timeout = shift || 0;
+  my ($self, $infinite, $wait_seconds) = @_;
 
   return 0 unless exists($self->{_os_obj});
 
@@ -158,7 +157,7 @@ sub _reap {
   #   (0, exit_value)	: sucessfully waited on.
   #   (1, undef)	: process already reaped and exist value lost.
   #   (2, undef)	: process still running.
-  my ($result, $exit_value) = $self->_waitpid($timeout);
+  my ($result, $exit_value) = $self->_waitpid($infinite, $wait_seconds);
   if ($result == 0 or $result == 1) {
     $self->{_exit_value} = defined($exit_value) ? $exit_value : 0;
     delete $self->{_os_obj};
@@ -184,18 +183,16 @@ sub alive {
 }
 
 sub wait {
-  my $self = shift;
-
-  # If neither _os_obj or _exit_value are set, then something is wrong.
-  if (!exists($self->{_exit_value}) and !exists($self->{_os_obj})) {
-    return;
-  }
+  my ($self, $timeout_seconds) = @_;
 
   # If $self->{_exit_value} exists, then we already waited.
   return $self->{_exit_value} if exists($self->{_exit_value});
 
+  # If neither _os_obj or _exit_value are set, then something is wrong.
+  return if !exists($self->{_os_obj});
+
   # Otherwise, wait forever for the process to finish.
-  $self->_reap(1);
+  $self->_reap(defined $timeout_seconds? 0 : 1, $timeout_seconds);
   return $self->{_exit_value};
 }
 
@@ -377,6 +374,9 @@ HUP, QUIT, INT, KILL.
 
 =item B<wait>
 
+  $exit= $proc->wait; # blocks forever
+  $exit= $proc->wait($timeout_seconds); # since version 1.11
+
 Wait for the process to exit.  Return the exit status of the command
 as returned by wait() on the system.  To get the actual exit value,
 divide by 256 or right bit shift by 8, regardless of the operating
@@ -385,6 +385,14 @@ list in a list context, an undefined value in a scalar context, or
 nothing in a void context.  This function may be called multiple times
 even after the process has exited and it will return the same exit
 status.
+
+Since version 1.11, you may pass an optional argument of the number of
+seconds to wait for the process to exit.  This may be fractional, and
+if it is zero then the wait will be non-blocking.  Note that on Unix
+this is implemented with L<Time::HiRes/alarm> before a call to wait(),
+so it may not be compatible with scripts that use alarm() for other
+purposes, or systems/perls that resume system calls after a signal.
+In the event of a timeout, the return will be undef.
 
 =item B<start_time>
 

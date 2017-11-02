@@ -65,12 +65,23 @@ sub _new {
 
 # Wait for the child.
 sub _waitpid {
-  my $self    = shift;
-  my $timeout = shift;
+  my ($self, $infinite, $wait_seconds) = @_;
 
   {
     # Try to wait on the process.
-    my $result = waitpid($self->{_os_obj}, $timeout ? 0 : WNOHANG);
+    # Implement the optional timeout with the 'alarm' call.
+    my $result;
+    if ($wait_seconds) {
+      require Time::HiRes;
+      local $SIG{ALRM}= sub { die "alarm\n" };
+      Time::HiRes::alarm($wait_seconds);
+      eval { $result= waitpid($self->{_os_obj}, 0); };
+      Time::HiRes::alarm(0);
+    }
+    else {
+      $result= waitpid($self->{_os_obj}, $infinite? 0 : WNOHANG);
+    }
+
     # Process finished.  Grab the exit value.
     if ($result == $self->{_os_obj}) {
       return (0, $?);
