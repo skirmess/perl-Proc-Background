@@ -1,20 +1,14 @@
-# Proc::Background: Generic interface to background process management.
-#
-# Copyright (C) 1998-2005 Blair Zajac.  All rights reserved.
-
 package Proc::Background;
 
+# ABSTRACT: Generic interface to background process management
 require 5.004_04;
 
 use strict;
 use Exporter;
 use Carp;
 use Cwd;
-
-use vars qw(@ISA $VERSION @EXPORT_OK);
-@ISA       = qw(Exporter);
-@EXPORT_OK = qw(timeout_system);
-$VERSION   = sprintf '%d.%02d', '$Revision: 1.11 $' =~ /(\d+)\.(\d+)/;
+@Proc::Background::ISA       = qw(Exporter);
+@Proc::Background::EXPORT_OK = qw(timeout_system);
 
 # Determine if the operating system is Windows.
 my $is_windows = $^O eq 'MSWin32';
@@ -39,10 +33,10 @@ if ($is_windows) {
 # unresolved method calls will go to either of these classes.
 if ($is_windows) {
   require Proc::Background::Win32;
-  unshift(@ISA, 'Proc::Background::Win32');
+  unshift(@Proc::Background::ISA, 'Proc::Background::Win32');
 } else {
   require Proc::Background::Unix;
-  unshift(@ISA, 'Proc::Background::Unix');
+  unshift(@Proc::Background::ISA, 'Proc::Background::Unix');
 }
 
 # Take either a relative or absolute path to a command and make it an
@@ -472,14 +466,3 @@ gather the exit status.  In this case, the exit status will be set to
 
 See also L<Proc::Background::Unix> and L<Proc::Background::Win32>.
 
-=head1 AUTHOR
-
-Blair Zajac <blair@orcaware.com>
-
-=head1 COPYRIGHT
-
-Copyright (C) 1998-2005 Blair Zajac.  All rights reserved.  This
-package is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
-
-=cut

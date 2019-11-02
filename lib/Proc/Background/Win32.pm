@@ -1,18 +1,13 @@
-# Proc::Background::Win32 Windows interface to background process management.
-#
-# Copyright (C) 1998-2005 Blair Zajac.  All rights reserved.
-
 package Proc::Background::Win32;
 
+# ABSTRACT: Windows-specific implementation of process create/wait/kill
 require 5.004_04;
 
 use strict;
 use Exporter;
 use Carp;
 
-use vars qw(@ISA $VERSION);
-@ISA     = qw(Exporter);
-$VERSION = sprintf '%d.%02d', '$Revision: 1.10 $' =~ /(\d+)\.(\d+)/;
+@Proc::Background::Win32::ISA = qw(Exporter);
 
 BEGIN {
   eval "use Win32";
@@ -146,15 +141,5 @@ I<Proc::Background> class.  See L<Proc::Background> for more information.
 =head1 IMPLEMENTATION
 
 This package uses the Win32::Process class to manage the objects.
-
-=head1 AUTHOR
-
-Blair Zajac <blair@orcaware.com>
-
-=head1 COPYRIGHT
-
-Copyright (C) 1998-2005 Blair Zajac.  All rights reserved.  This
-package is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
 
 =cut

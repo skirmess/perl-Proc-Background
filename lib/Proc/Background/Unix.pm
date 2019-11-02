@@ -1,9 +1,6 @@
-# Proc::Background::Unix: Unix interface to background process management.
-#
-# Copyright (C) 1998-2005 Blair Zajac.  All rights reserved.
-
 package Proc::Background::Unix;
 
+# ABSTRACT: Unix-specific implementation of process create/wait/kill
 require 5.004_04;
 
 use strict;
@@ -11,9 +8,7 @@ use Exporter;
 use Carp;
 use POSIX qw(:errno_h :sys_wait_h);
 
-use vars qw(@ISA $VERSION);
-@ISA     = qw(Exporter);
-$VERSION = sprintf '%d.%02d', '$Revision: 1.10 $' =~ /(\d+)\.(\d+)/;
+@Proc::Background::Unix::ISA = qw(Exporter);
 
 # Start the background process.  If it is started sucessfully, then record
 # the process id in $self->{_os_obj}.
@@ -135,15 +130,5 @@ Do not use this module directly.
 This is a process management class designed specifically for Unix
 operating systems.  It is not meant used except through the
 I<Proc::Background> class.  See L<Proc::Background> for more information.
-
-=head1 AUTHOR
-
-Blair Zajac <blair@orcaware.com>
-
-=head1 COPYRIGHT
-
-Copyright (C) 1998-2005 Blair Zajac.  All rights reserved.  This
-package is free software; you can redistribute it and/or modify it
-under the same terms as Perl itself.
 
 =cut
