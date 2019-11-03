@@ -134,14 +134,15 @@ sub DESTROY {
   }
 }
 
-# Reap the child.  If the first argument is 1 then it should wait forever.
-# Else, the second argument specifies the number of seconds to wait.
+# Reap the child.  If the first argument is false, then return immediately.
+# Else, block waiting for the process to exit.  If no second argument is
+# given, wait forever, else wait for that number of seconds.
 # If the wait was sucessful, then delete
 # $self->{_os_obj} and set $self->{_exit_value} to the OS specific
 # class return of _reap.  Return 1 if we sucessfully waited, 0
 # otherwise.
 sub _reap {
-  my ($self, $infinite, $wait_seconds) = @_;
+  my ($self, $blocking, $wait_seconds) = @_;
 
   return 0 unless exists($self->{_os_obj});
 
@@ -149,9 +150,9 @@ sub _reap {
   # the Proc::Background::*::waitpid call, which returns one of three
   # values.
   #   (0, exit_value)	: sucessfully waited on.
-  #   (1, undef)	: process already reaped and exist value lost.
+  #   (1, undef)	: process already reaped and exit value lost.
   #   (2, undef)	: process still running.
-  my ($result, $exit_value) = $self->_waitpid($infinite, $wait_seconds);
+  my ($result, $exit_value) = $self->_waitpid($blocking, $wait_seconds);
   if ($result == 0 or $result == 1) {
     $self->{_exit_value} = defined($exit_value) ? $exit_value : 0;
     delete $self->{_os_obj};
@@ -183,10 +184,10 @@ sub wait {
   return $self->{_exit_value} if exists($self->{_exit_value});
 
   # If neither _os_obj or _exit_value are set, then something is wrong.
-  return if !exists($self->{_os_obj});
+  return undef if !exists($self->{_os_obj});
 
   # Otherwise, wait forever for the process to finish.
-  $self->_reap(defined $timeout_seconds? 0 : 1, $timeout_seconds);
+  $self->_reap(1, $timeout_seconds);
   return $self->{_exit_value};
 }
 
@@ -196,8 +197,10 @@ sub die {
   # See if the process has already died.
   return 1 unless $self->alive;
 
+  croak '->die(@kill_sequence) should have an even number of arguments'
+    if @_ & 1;
   # Kill the process using the OS specific method.
-  $self->_die;
+  $self->_die(@_? ([ @_ ]) : ());
 
   # See if the process is still alive.
   !$self->alive;
@@ -227,14 +230,10 @@ sub timeout_system {
 
   my $proc = Proc::Background->new(@_) or return;
   my $end_time = $proc->start_time + $timeout;
-  while ($proc->alive and time < $end_time) {
-    sleep(1);
-  }
+  $proc->wait($end_time - time) while time < $end_time;
 
   my $alive = $proc->alive;
-  if ($alive) {
-    $proc->die;
-  }
+  $proc->die if $alive;
 
   if (wantarray) {
     return ($proc->wait, $alive);
@@ -358,13 +357,28 @@ even if the process has already finished.
 
 Return 1 if the process is still active, 0 otherwise.
 
-=item B<die>
+=item B<die>, B<die(@kill_sequence)>
 
 Reliably try to kill the process.  Returns 1 if the process no longer
 exists once B<die> has completed, 0 otherwise.  This will also return
-1 if the process has already died.  On Unix, the following signals are
-sent to the process in one second intervals until the process dies:
-HUP, QUIT, INT, KILL.
+1 if the process has already died.
+
+C<@kill_sequence> is a list of actions and seconds-to-wait for that
+action to end the process.  The default is C< TERM 2 TERM 3 KILL 15 >.
+On Unix this sends SIGTERM and SIGKILL; on Windows it runs taskkill.exe and
+TerminateProcess, respectively.
+
+Note that C<die()> on Proc::Background 1.10 and earlier did not attempt
+taskkill.exe on Windows (going straight to TerminateProcess), and on Unix
+had the effect of
+
+  ->die( ( HUP => 1 )x5, ( QUIT => 1 )x5, ( INT => 1 )x5, ( KILL => 1 )x5 );
+
+which didn't particularly make a lot of sense, since SIGHUP is open to
+interpretation, and QUIT is almost always immediately fatal and generates
+an unneeded coredump.  The new default tries to preserve the same rough
+default of 5 seconds before a fatal signal (KILL) is sent, while sending
+TERM twice since programs might respond more urgently to a second one.
 
 =item B<wait>
 

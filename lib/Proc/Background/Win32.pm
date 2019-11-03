@@ -87,11 +87,14 @@ sub _new {
 }
 
 # Reap the child.
+#   (0, exit_value)	: sucessfully waited on.
+#   (1, undef)	: process already reaped and exit value lost.
+#   (2, undef)	: process still running.
 sub _waitpid {
-  my ($self, $infinite, $wait_seconds) = @_;
+  my ($self, $blocking, $wait_seconds) = @_;
 
   # Try to wait on the process.
-  my $result = $self->{_os_obj}->Wait($infinite ? INFINITE : $wait_seconds? int($wait_seconds * 1000) : 0);
+  my $result = $self->{_os_obj}->Wait($wait_seconds? int($wait_seconds * 1000) : $blocking ? INFINITE : 0);
   # Process finished.  Grab the exit value.
   if ($result == 1) {
     my $_exit_status;
@@ -108,15 +111,20 @@ sub _waitpid {
 
 sub _die {
   my $self = shift;
+  my @kill_sequence= @_ && ref $_[0] eq 'ARRAY'? @{ $_[0] } : qw( TERM 2 TERM 8 KILL 3 KILL 7 );
 
-  # Try the kill the process several times.  Calling alive() will
-  # collect the exit status of the program.
-  my $count = 5;
-  while ($count and $self->alive) {
-    --$count;
-    $self->{_os_obj}->Kill(1<<8);
-    last unless $self->alive;
-    sleep 1;
+  # Try the kill the process several times.
+  # _reap will collect the exit status of the program.
+  while (@kill_sequence and $self->alive) {
+    my $sig= shift @kill_sequence;
+    my $delay= shift @kill_sequence;
+    if ($sig eq 'TERM') {
+      `taskkill.exe /PID $self->{_pid}`;
+      $? == 0 or $self->{_os_obj}->Kill(1<<8); # fall back to TerminateProcess if taskkill fails
+    } else {
+      $self->{_os_obj}->Kill(1<<8);  # call TerminateProcess, essentially SIGKILL
+    }
+    last if $self->_reap(1, $delay); # block before sending next signal
   }
 }
 

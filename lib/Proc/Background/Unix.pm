@@ -59,14 +59,17 @@ sub _new {
 }
 
 # Wait for the child.
+#   (0, exit_value)	: sucessfully waited on.
+#   (1, undef)	: process already reaped and exit value lost.
+#   (2, undef)	: process still running.
 sub _waitpid {
-  my ($self, $infinite, $wait_seconds) = @_;
+  my ($self, $blocking, $wait_seconds) = @_;
 
   {
     # Try to wait on the process.
     # Implement the optional timeout with the 'alarm' call.
-    my $result;
-    if ($wait_seconds) {
+    my $result= 0;
+    if ($blocking && $wait_seconds) {
       require Time::HiRes;
       local $SIG{ALRM}= sub { die "alarm\n" };
       Time::HiRes::alarm($wait_seconds);
@@ -74,7 +77,7 @@ sub _waitpid {
       Time::HiRes::alarm(0);
     }
     else {
-      $result= waitpid($self->{_os_obj}, $infinite? 0 : WNOHANG);
+      $result= waitpid($self->{_os_obj}, $blocking? 0 : WNOHANG);
     }
 
     # Process finished.  Grab the exit value.
@@ -97,19 +100,14 @@ sub _waitpid {
 
 sub _die {
   my $self = shift;
-
+  my @kill_sequence= @_ && ref $_[0] eq 'ARRAY'? @{ $_[0] } : qw( TERM 2 TERM 8 KILL 3 KILL 7 );
   # Try to kill the process with different signals.  Calling alive() will
   # collect the exit status of the program.
-  SIGNAL: {
-    foreach my $signal (qw(HUP QUIT INT KILL)) {
-      my $count = 5;
-      while ($count and $self->alive) {
-        --$count;
-        kill($signal, $self->{_os_obj});
-        last SIGNAL unless $self->alive;
-        sleep 1;
-      }
-    }
+  while (@kill_sequence and $self->alive) {
+    my $sig= shift @kill_sequence;
+    my $delay= shift @kill_sequence;
+    kill($sig, $self->{_os_obj});
+    last if $self->_reap(1, $delay); # block before sending next signal
   }
 }
 
