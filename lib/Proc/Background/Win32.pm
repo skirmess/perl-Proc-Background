@@ -97,9 +97,13 @@ sub _waitpid {
   my $result = $self->{_os_obj}->Wait($wait_seconds? int($wait_seconds * 1000) : $blocking ? INFINITE : 0);
   # Process finished.  Grab the exit value.
   if ($result == 1) {
-    my $_exit_status;
-    $self->{_os_obj}->GetExitCode($_exit_status);
-    return (0, $_exit_status<<8);
+    my $exit_code;
+    $self->{_os_obj}->GetExitCode($exit_code);
+    if ($exit_code == 256 && $self->{_called_terminateprocess}) {
+      return (0, 9); # simulate SIGKILL exit status
+    } else {
+      return (0, $exit_code<<8);
+    }
   }
   # Process still running.
   elsif ($result == 0) {
@@ -118,14 +122,31 @@ sub _die {
   while (@kill_sequence and $self->alive) {
     my $sig= shift @kill_sequence;
     my $delay= shift @kill_sequence;
-    if ($sig eq 'TERM') {
-      `taskkill.exe /PID $self->{_pid}`;
-      $? == 0 or $self->{_os_obj}->Kill(1<<8); # fall back to TerminateProcess if taskkill fails
-    } else {
-      $self->{_os_obj}->Kill(1<<8);  # call TerminateProcess, essentially SIGKILL
-    }
+    $sig eq 'KILL'? $self->_send_sigkill : $self->_send_sigterm;
     last if $self->_reap(1, $delay); # block before sending next signal
   }
+}
+
+# Use taskkill.exe as a sort of graceful SIGTERM substitute.
+sub _send_sigterm {
+  my $self = shift;
+  # TODO: This doesn't work reliably.  Disabled for now, and continue to be heavy-handed
+  # using TerminateProcess.  The right solution would either be to do more elaborate setup
+  # to make sure the correct taskkill.exe is used (and available), or to dig much deeper
+  # into Win32 API to enumerate windows or threads and send WM_QUIT, or whatever other APIs
+  # processes might be watching on Windows.  That should probably be its own module.
+  # my $pid= $self->{_pid};
+  # my $out= `taskkill.exe /PID $pid`;
+  # If can't run taskkill, fall back to TerminateProcess
+  # $? == 0 or
+  $self->_send_sigkill;
+}
+
+# Win32 equivalent of SIGKILL is TerminateProcess()
+sub _send_sigkill {
+  my $self = shift;
+  $self->{_os_obj}->Kill(256);  # call TerminateProcess, essentially SIGKILL
+  $self->{_called_terminateprocess} = 1;
 }
 
 1;

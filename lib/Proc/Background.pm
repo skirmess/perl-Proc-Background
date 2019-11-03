@@ -236,6 +236,16 @@ sub start_time {
   $_[0]->{_start_time};
 }
 
+sub exit_code {
+  return undef unless defined $_[0]->{_exit_value};
+  return $_[0]->{_exit_value} >> 8;
+}
+
+sub exit_signal {
+  return undef unless defined $_[0]->{_exit_value};
+  return $_[0]->{_exit_value} & 127;
+}
+
 sub end_time {
   $_[0]->{_end_time};
 }
@@ -427,6 +437,19 @@ this is implemented with L<Time::HiRes/alarm> before a call to wait(),
 so it may not be compatible with scripts that use alarm() for other
 purposes, or systems/perls that resume system calls after a signal.
 In the event of a timeout, the return will be undef.
+
+=item B<exit_code>
+
+Returns the exit code of the process, assuming it exited cleanly.
+Returns C<undef> if the process has not exited yet, and 0 if the
+process exited with a signal (or TerminateProcess).  Since 0 is
+ambiguous, check for C<exit_signal> first.
+
+=item B<exit_signal>
+
+Returns the value of the signal the process exited with, assuming it
+died on a signal.  Returns C<undef> if it has not exited yet, and 0
+if it did not die to a signal.
 
 =item B<start_time>
 
