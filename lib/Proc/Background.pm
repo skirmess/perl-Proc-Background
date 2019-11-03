@@ -21,14 +21,17 @@ my $weaken_subref = Scalar::Util->can('weaken');
 # executable.
 my $is_absolute_re;
 my $has_dir_element_re;
+my $path_sep;
 my @extensions = ('');
 if ($is_windows) {
   $is_absolute_re     = '^(?:(?:[a-zA-Z]:[\\\\/])|(?:[\\\\/]{2}\w+[\\\\/]))';
   $has_dir_element_re = "[\\\\/]";
+  $path_sep           = "\\";
   push(@extensions, '.exe');
 } else {
   $is_absolute_re     = "^/";
   $has_dir_element_re = "/";
+  $path_sep           = "/";
 }
 
 # Make this class a subclass of Proc::Win32 or Proc::Unix.  Any
@@ -69,7 +72,7 @@ sub _resolve_path {
   } else {
     my $cwd = cwd;
     if ($command =~ /$has_dir_element_re/o) {
-      my $p1 = "$cwd/$command";
+      my $p1 = "$cwd$path_sep$command";
       foreach my $ext (@extensions) {
         my $p2 = "$p1$ext";
         if (-f $p2 and -x _) {
@@ -80,8 +83,8 @@ sub _resolve_path {
     } else {
       foreach my $dir (split($is_windows ? ';' : ':', $ENV{PATH})) {
         next unless length $dir;
-        $dir = "$cwd/$dir" unless $dir =~ /$is_absolute_re/o;
-        my $p1 = "$dir/$command";
+        $dir = "$cwd$path_sep$dir" unless $dir =~ /$is_absolute_re/o;
+        my $p1 = "$dir$path_sep$command";
         foreach my $ext (@extensions) {
           my $p2 = "$p1$ext";
           if (-f $p2 and -x _) {
