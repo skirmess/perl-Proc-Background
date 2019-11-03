@@ -7,11 +7,13 @@ use strict;
 use Exporter;
 use Carp;
 use Cwd;
+use Scalar::Util;
 @Proc::Background::ISA       = qw(Exporter);
 @Proc::Background::EXPORT_OK = qw(timeout_system);
 
 # Determine if the operating system is Windows.
 my $is_windows = $^O eq 'MSWin32';
+my $weaken_subref = Scalar::Util->can('weaken');
 
 # Set up a regular expression that tests if the path is absolute and
 # if it has a directory separator in it.  Also create a list of file
@@ -121,7 +123,17 @@ sub new {
 
   # Handle the specific options.
   if ($options) {
-    $self->{_die_upon_destroy} = $options->{die_upon_destroy};
+    if ($options->{die_upon_destroy}) {
+      $self->{_die_upon_destroy} = 1;
+      # Global destruction can break this feature, because there are no guarantees
+      # on which order object destructors are called.  In order to avoid that, need
+      # to run all the ->die methods during END{}, and that requires weak
+      # references which weren't available until 5.8
+      $weaken_subref->( $Proc::Background::_die_upon_destroy{$self+0}= $self )
+        if $weaken_subref;
+      # could warn about it for earlier perl... but has been broken for 15 years and
+      # who is still using < 5.8 anyway?
+    }
   }
 
   bless $self, $class;
@@ -131,7 +143,15 @@ sub DESTROY {
   my $self = shift;
   if ($self->{_die_upon_destroy}) {
     $self->die;
+    delete $Proc::Background::_die_upon_destroy{$self+0};
   }
+}
+
+END {
+  # Child processes need killed before global destruction, else the
+  # Win32::Process objects might get destroyed first.
+  $_->die for grep defined, values %Proc::Background::_die_upon_destroy;
+  %Proc::Background::_die_upon_destroy= ();
 }
 
 # Reap the child.  If the first argument is false, then return immediately.
