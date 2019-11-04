@@ -6,15 +6,10 @@ require 5.004_04;
 use strict;
 use Exporter;
 use Carp;
+use Win32::Process qw( NORMAL_PRIORITY_CLASS INFINITE );
+use Win32::ShellQuote ();
 
 @Proc::Background::Win32::ISA = qw(Exporter);
-
-BEGIN {
-  eval "use Win32";
-  $@ and die "Proc::Background::Win32 needs Win32 from libwin32-?.??.zip to run.\n";
-  eval "use Win32::Process";
-  $@ and die "Proc::Background::Win32 needs Win32::Process from libwin32-?.??.zip to run.\n";
-}
 
 sub _new {
   my $class = shift;
@@ -25,36 +20,21 @@ sub _new {
 
   return unless defined $_[0];
 
-  # If there is only one element in the @_ array, then just split the
-  # argument by whitespace.  If there is more than one element in @_,
-  # then assume that each argument should be properly protected from
-  # the shell so that whitespace and special characters are passed
-  # properly to the program, just as it would be in a Unix
-  # environment.  This will ensure that a single argument with
-  # whitespace will not be split into multiple arguments by the time
-  # the program is run.  Make sure that any arguments that are already
-  # protected stay protected.  Then convert unquoted "'s into \"'s.
-  # Finally, check for whitespace and protect it.
-  my @args;
-  my $exe;
+  # If there is only one argument, treat it as system() would and assume
+  # it should be split into arguments.  The first argument is then the
+  # application executable.
+  my ($exe, $cmdline);
   if (@_ == 1) {
-    @args = split(' ', $_[0]);
-    $exe = $args[0];
-  } else {
-    @args = @_;
-    $exe = $args[0];
-    for (my $i=0; $i<@args; ++$i) {
-      my $arg = $args[$i];
-      $arg =~ s#\\\\#\200#g;
-      $arg =~ s#\\"#\201#g;
-      $arg =~ s#"#\\"#g;
-      $arg =~ s#\200#\\\\#g;
-      $arg =~ s#\201#\\"#g;
-      if (length($arg) == 0 or $arg =~ /\s/) {
-        $arg = "\"$arg\"";
-      }
-      $args[$i] = $arg;
-    }
+    $cmdline= $_[0];
+    ($exe) = Win32::ShellQuote::unquote_native($cmdline);
+  }
+  # system() would treat a list of arguments as an un-quoted ARGV
+  # for the program, so concatenate them into a command line appropriate
+  # for Win32 CommandLineToArgvW to decode back to what we started with.
+  # Preserve the first un-quoted argument for use as lpApplicationName.
+  else {
+    $exe = $_[0];
+    $cmdline= Win32::ShellQuote::quote_native(@_);
   }
 
   # Find the absolute path to the program.  If it cannot be found,
@@ -74,7 +54,7 @@ sub _new {
   # Create the process.
   if (Win32::Process::Create($os_obj,
 			     $exe,
-			     "@args",
+			     $cmdline,
 			     0,
 			     NORMAL_PRIORITY_CLASS,
 			     '.')) {
