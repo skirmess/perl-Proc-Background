@@ -400,37 +400,34 @@ exists once B<die> has completed, 0 otherwise.  This will also return
 1 if the process has already died.
 
 C<@kill_sequence> is a list of actions and seconds-to-wait for that
-action to end the process.  The default is C< TERM 2 TERM 3 KILL 15 >.
-On Unix this sends SIGTERM and SIGKILL; on Windows it runs taskkill.exe and
-TerminateProcess, respectively.
+action to end the process.  The default is C< TERM 2 TERM 8 KILL 3 KILL 7 >.
+On Unix this sends SIGTERM and SIGKILL; on Windows it just calls
+TerminateProcess (graceful termination is still a TODO).
 
-Note that C<die()> on Proc::Background 1.10 and earlier did not attempt
-taskkill.exe on Windows (going straight to TerminateProcess), and on Unix
-had the effect of
+Note that C<die()> on Proc::Background 1.10 and earlier on Unix called a
+sequence of:
 
   ->die( ( HUP => 1 )x5, ( QUIT => 1 )x5, ( INT => 1 )x5, ( KILL => 1 )x5 );
 
 which didn't particularly make a lot of sense, since SIGHUP is open to
 interpretation, and QUIT is almost always immediately fatal and generates
-an unneeded coredump.  The new default tries to preserve the same rough
-default of 5 seconds before a fatal signal (KILL) is sent, while sending
-TERM twice since programs might respond more urgently to a second one.
+an unneeded coredump.  The new default should accomodate programs that
+acknowledge a second SIGTERM, and give enough time for it to exit on a laggy
+system while still not holding up the main script too much.
 
 =item B<wait>
 
   $exit= $proc->wait; # blocks forever
-  $exit= $proc->wait($timeout_seconds); # since version 1.11
+  $exit= $proc->wait($timeout_seconds); # since version 1.20
 
 Wait for the process to exit.  Return the exit status of the command
 as returned by wait() on the system.  To get the actual exit value,
 divide by 256 or right bit shift by 8, regardless of the operating
-system being used.  If the process never existed, then return an empty
-list in a list context, an undefined value in a scalar context, or
-nothing in a void context.  This function may be called multiple times
-even after the process has exited and it will return the same exit
-status.
+system being used.  If the process never existed, this returns undef.
+This function may be called multiple times even after the process has
+exited and it will return the same exit status.
 
-Since version 1.11, you may pass an optional argument of the number of
+Since version 1.20, you may pass an optional argument of the number of
 seconds to wait for the process to exit.  This may be fractional, and
 if it is zero then the wait will be non-blocking.  Note that on Unix
 this is implemented with L<Time::HiRes/alarm> before a call to wait(),
@@ -527,5 +524,28 @@ gather the exit status.  In this case, the exit status will be set to
 
 =head1 SEE ALSO
 
-See also L<Proc::Background::Unix> and L<Proc::Background::Win32>.
+=over
 
+=item L<IPC::Run>
+
+IPC::Run is a much more complete solution for running child processes.
+It handles dozens of forms of redirection and pipe pumping, and should
+probably be your first stop for any complex needs.
+
+However, also note the very large and slightly alarming list of
+limitations it lists for Win32.  Proc::Background is a much simpler design
+and should be more reliable for simple needs.
+
+=item L<Win32::ShellQuote>
+
+If you are running on Win32, this article by helps describe the problem you
+are up against for passing argument lists:
+
+L<Everyone quotes command line arguments the wrong way|https://blogs.msdn.microsoft.com/twistylittlepassagesallalike/2011/04/23/everyone-quotes-command-line-arguments-the-wrong-way/>
+by Daniel Colascione.
+
+This module gives you parsing / quoting per the standard
+CommandLineToArgvW behavior.  But, if you need to pass arguments to be
+processed by C<cmd.exe> then you need to do additional work.
+
+=back
