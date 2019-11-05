@@ -212,9 +212,8 @@ sub wait {
   # If neither _os_obj or _exit_value are set, then something is wrong.
   return undef if !exists($self->{_os_obj});
 
-  # Otherwise, wait forever for the process to finish.
-  $self->_reap(1, $timeout_seconds);
-  return $self->{_exit_value};
+  # Otherwise, wait for the process to finish.
+  return $self->_reap(1, $timeout_seconds)? $self->{_exit_value} : undef;
 }
 
 sub die {
@@ -237,12 +236,12 @@ sub start_time {
 }
 
 sub exit_code {
-  return undef unless defined $_[0]->{_exit_value};
+  return undef unless exists $_[0]->{_exit_value};
   return $_[0]->{_exit_value} >> 8;
 }
 
 sub exit_signal {
-  return undef unless defined $_[0]->{_exit_value};
+  return undef unless exists $_[0]->{_exit_value};
   return $_[0]->{_exit_value} & 127;
 }
 
