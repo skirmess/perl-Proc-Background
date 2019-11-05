@@ -265,7 +265,10 @@ sub timeout_system {
 
   my $proc = Proc::Background->new(@_) or return;
   my $end_time = $proc->start_time + $timeout;
-  $proc->wait($end_time - time) while time < $end_time;
+  my $delay;
+  while (($delay= ($end_time - time)) > 0 && !defined $proc->exit_code) {
+    $proc->wait($delay);
+  }
 
   my $alive = $proc->alive;
   $proc->die if $alive;
