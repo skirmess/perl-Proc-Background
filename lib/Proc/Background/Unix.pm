@@ -7,6 +7,17 @@ use strict;
 use Exporter;
 use Carp;
 use POSIX qw(:errno_h :sys_wait_h);
+# For un-explained mysterious reasons, Time::HiRes::alarm seem to misbehave on 5.10 and earlier
+if ($] >= 5.012) {
+	require Time::HiRes;
+	Time::HiRes->import('alarm');
+}
+else {
+	*alarm= sub {
+		# round up to whole seconds
+		CORE::alarm(POSIX::ceil($_[0]));
+	};
+}
 
 @Proc::Background::Unix::ISA = qw(Exporter);
 
@@ -70,11 +81,10 @@ sub _waitpid {
     # Implement the optional timeout with the 'alarm' call.
     my $result= 0;
     if ($blocking && $wait_seconds) {
-      require Time::HiRes;
       local $SIG{ALRM}= sub { die "alarm\n" };
-      Time::HiRes::alarm($wait_seconds);
+      alarm($wait_seconds);
       eval { $result= waitpid($self->{_os_obj}, 0); };
-      Time::HiRes::alarm(0);
+      alarm(0);
     }
     else {
       $result= waitpid($self->{_os_obj}, $blocking? 0 : WNOHANG);
