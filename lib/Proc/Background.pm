@@ -1,6 +1,6 @@
 package Proc::Background;
 
-# ABSTRACT: Generic interface to background process management
+# ABSTRACT: Generic interface to Unix and Win32 background process management
 require 5.004_04;
 
 use strict;
@@ -287,10 +287,6 @@ __END__
 
 =pod
 
-=head1 NAME
-
-Proc::Background - Generic interface to Unix and Win32 background process management
-
 =head1 SYNOPSIS
 
     use Proc::Background;
@@ -541,11 +537,9 @@ and should be more reliable for simple needs.
 
 =item L<Win32::ShellQuote>
 
-If you are running on Win32, this article by helps describe the problem you
-are up against for passing argument lists:
-
+If you are running on Win32, this article by Daniel Colascione helps
+describe the problem you are up against for passing argument lists:
 L<Everyone quotes command line arguments the wrong way|https://blogs.msdn.microsoft.com/twistylittlepassagesallalike/2011/04/23/everyone-quotes-command-line-arguments-the-wrong-way/>
-by Daniel Colascione.
 
 This module gives you parsing / quoting per the standard
 CommandLineToArgvW behavior.  But, if you need to pass arguments to be
