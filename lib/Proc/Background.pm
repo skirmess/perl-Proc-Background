@@ -103,43 +103,83 @@ sub _resolve_path {
   $path;
 }
 
+# Define the set of allowed options, to warn about unknown ones.
+# Make it a method so subclasses can override it.
+%Proc::Background::_available_options= (
+  command => 1, exe => 1, die_upon_destroy => 1,
+);
+
+sub _available_options {
+  return \%Proc::Background::_available_options;
+}
+
 # We want the created object to live in Proc::Background instead of
 # the OS specific class so that generic method calls can be used.
 sub new {
   my $class = shift;
 
+  # The parameters are an optional %options hashref followed by any number
+  # of arguments to become the @argv for exec().  If options are given, check
+  # the keys for typos.
   my $options;
-  if (@_ and defined $_[0] and UNIVERSAL::isa($_[0], 'HASH')) {
-    $options = shift;
+  if (@_ and ref $_[0] eq 'HASH') {
+    $options= shift;
+    my $known= $class->_available_options;
+    my @unknown= grep !$known->{$_}, keys %$options;
+    carp "Unknown options: ".join(', ', @unknown)
+      if @unknown;
+  }
+  else {
+    $options= {};
   }
 
-  unless (@_ > 0) {
-    confess "Proc::Background::new called with insufficient number of arguments";
+  my $self= bless {}, $class;
+
+  # Resolve any confusion between the 'command' option and positional @argv params.
+  # Store the command in $self->{_command} so that the ::Unix and ::Win32 don't have
+  # to deal with it redundantly.
+  my $cmd= $options->{command};
+  if (defined $cmd) {
+    croak "Can't use both 'command' option and command argument list"
+      if @_;
+    # Can be an arrayref or a single string
+    croak "command must be a non-empty string or an arrayref of strings"
+      unless (ref $cmd eq 'ARRAY' && defined $cmd->[0] && length $cmd->[0])
+        or (!ref $cmd && defined $cmd && length $cmd);
+  }
+  else {
+    # Back-compat: maintain original API quirks
+    confess "Proc::Background::new called with insufficient number of arguments"
+      unless @_;
+    return unless defined $_[0];
+
+    # Interpret the parameters as an @argv if there is more than one,
+    # or if the 'exe' option was given.
+    $cmd= (@_ > 1 || defined $options->{exe})? [ @_ ] : $_[0];
   }
 
-  return unless defined $_[0];
+  $self->{_command}= $cmd;
+  $self->{_exe}= $options->{exe} if defined $options->{exe};
 
-  my $self = $class->SUPER::_new(@_) or return;
+  # Also back-compat: failing to fork or CreateProcess returns undef
+  return unless $self->_start($options);
 
-  # Save the start time of the class.
+  # Save the start time
   $self->{_start_time} = time;
 
-  # Handle the specific options.
-  if ($options) {
-    if ($options->{die_upon_destroy}) {
-      $self->{_die_upon_destroy} = 1;
-      # Global destruction can break this feature, because there are no guarantees
-      # on which order object destructors are called.  In order to avoid that, need
-      # to run all the ->die methods during END{}, and that requires weak
-      # references which weren't available until 5.8
-      $weaken_subref->( $Proc::Background::_die_upon_destroy{$self+0}= $self )
-        if $weaken_subref;
-      # could warn about it for earlier perl... but has been broken for 15 years and
-      # who is still using < 5.8 anyway?
-    }
+  if ($options->{die_upon_destroy}) {
+    $self->{_die_upon_destroy} = 1;
+    # Global destruction can break this feature, because there are no guarantees
+    # on which order object destructors are called.  In order to avoid that, need
+    # to run all the ->die methods during END{}, and that requires weak
+    # references which weren't available until 5.8
+    $weaken_subref->( $Proc::Background::_die_upon_destroy{$self+0}= $self )
+      if $weaken_subref;
+    # could warn about it for earlier perl... but has been broken for 15 years and
+    # who is still using < 5.8 anyway?
   }
 
-  bless $self, $class;
+  return $self;
 }
 
 sub DESTROY {
@@ -231,6 +271,14 @@ sub die {
   !$self->alive;
 }
 
+sub command {
+  $_[0]->{_command};
+}
+
+sub exe {
+  $_[0]->{_exe}
+}
+
 sub start_time {
   $_[0]->{_start_time};
 }
@@ -289,23 +337,28 @@ __END__
 
 =head1 SYNOPSIS
 
-    use Proc::Background;
-    timeout_system($seconds, $command, $arg1);
-    timeout_system($seconds, "$command $arg1");
-
-    my $proc1 = Proc::Background->new($command, $arg1, $arg2);
-    my $proc2 = Proc::Background->new("$command $arg1 1>&2");
-    $proc1->alive;
+  use Proc::Background;
+  timeout_system($seconds, $command, $arg1, $arg2);
+  timeout_system($seconds, "$command $arg1 $arg2");
+  
+  my $proc1 = Proc::Background->new($command, $arg1, $arg2) || die "failed";
+  my $proc2 = Proc::Background->new("$command $arg1 1>&2") || die "failed";
+  if ($proc1->alive) {
     $proc1->die;
     $proc1->wait;
-    my $time1 = $proc1->start_time;
-    my $time2 = $proc1->end_time;
-
-    # Add an option to kill the process with die when the variable is
-    # DESTROYed.
-    my $opts  = {'die_upon_destroy' => 1};
-    my $proc3 = Proc::Background->new($opts, $command, $arg1, $arg2);
-    $proc3    = undef;
+  }
+  say 'Ran for ' . ($proc1->end_time - $proc1->start_time) . ' seconds';
+  
+  # Resolve ambiguity of single-argument command
+  Proc::Background->new({ command => [ $command ] });
+  
+  # Pass a different $ARGV[0]
+  Proc::Background->new({ exe => 'busybox', command => ['true'] });
+  
+  # Add an option to kill the process with die when the object is
+  # DESTROYed.
+  my $proc4 = Proc::Background->new({ die_upon_destroy => 1 }, $command, $arg1, $arg2);
+  $proc4    = undef;
 
 =head1 DESCRIPTION
 
@@ -321,72 +374,75 @@ on, retrieve exit values, and see if background processes still exist.
 
 =item B<new> [options] 'I<command> [I<arg> [I<arg> ...]]'
 
-This creates a new background process.  As exec() or system() may be
-passed an array with a single single string element containing a
-command to be passed to the shell or an array with more than one
-element to be run without calling the shell, B<new> has the same
-behavior.
+This creates a new background process.  Just like C<system()>, you can
+supply a single string of the entire command line, or individual
+arguments.  The first argument may be a hashref of named options.
+To resolve the ambiguity between a command line vs. a single-element
+argument list, see the C<command> option below.
 
-In certain cases B<new> will attempt to find I<command> on the system
-and fail if it cannot be found.
+By default, the constructor returns an empty list on failure,
+except for a few cases of invalid arguments which call C<croak>.
 
-For Win32 operating systems:
+For platform-specific details, see L<Proc::Background::Unix/IMPLEMENTATION>
+or L<Proc::Background::Win32/IMPLEMENTATION>, but in short:
 
-    The Win32::Process module is always used to spawn background
-    processes on the Win32 platform.  This module always takes a
-    single string argument containing the executable's name and
-    any option arguments.  In addition, it requires that the
-    absolute path to the executable is also passed to it.  If
-    only a single argument is passed to new, then it is split on
-    whitespace into an array and the first element of the split
-    array is used at the executable's name.  If multiple
-    arguments are passed to new, then the first element is used
-    as the executable's name.
+=over 7
 
-    If the executable's name is an absolute path, then new
-    checks to see if the executable exists in the given location
-    or fails otherwise.  If the executable's name is not
-    absolute, then the executable is searched for using the PATH
-    environmental variable.  The input executable name is always
-    replaced with the absolute path determined by this process.
+=item Unix
 
-    In addition, when searching for the executable, the
-    executable is searched for using the unchanged executable
-    name and if that is not found, then it is checked by
-    appending `.exe' to the name in case the name was passed
-    without the `.exe' suffix.
+This implementation uses C<fork>/C<exec>.  If you supply a single-string
+command line, it is passed to the shell.  If you supply multiple arguments,
+they are passed to C<exec>.  In the multi-argument case, it will also check
+that the executable exists before calling C<fork>.
 
-    Finally, the argument array is placed back into a single
-    string and passed to Win32::Process::Create.
+=item Win32
 
-For non-Win32 operating systems, such as Unix:
+This implementation uses C<Win32::Process/CreateProcess>.  If you supply a
+single-string command line, it derives the executable by parsing the
+command line and looking for the first element in the C<PATH>, appending
+C<".exe"> if needed.  If you supply multiple arguments, the first is used
+as the C<exe> and the command line is built using C<Win32::ShellQuote>.
 
-    If more than one argument is passed to new, then new
-    assumes that the command will not be passed through the
-    shell and the first argument is the executable's relative
-    or absolute path.  If the first argument is an absolute
-    path, then it is checked to see if it exists and can be
-    run, otherwise new fails.  If the path is not absolute,
-    then the PATH environmental variable is checked to see if
-    the executable can be found.  If the executable cannot be
-    found, then new fails.  These steps are taking to prevent
-    exec() from failing after an fork() without the caller of
-    new knowing that something failed.
+=back
 
-The first argument to B<new> I<options> may be a reference to a hash
-which contains key/value pairs to modify Proc::Background's behavior.
-Currently the only key understood by B<new> is I<die_upon_destroy>.
-When this value is set to true, then when the Proc::Background object
-is being DESTROY'ed for any reason (i.e. the variable goes out of
-scope) the process is killed via the die() method.
+Options:
 
-If anything fails, then new returns an empty list in a list context,
-an undefined value in a scalar context, or nothing in a void context.
+=over
+
+=item C<command>
+
+You may specify the command as an option instead of passing the command
+as a list.  A string value is considered a command line, and an arrayref
+value is considered an argument list.  This can resolve the ambiguity
+between a command line vs. single-element argument list.
+
+=item C<exe>
+
+Specify the direct path to the executable.  This can serve two purposes:
+on Win32 it avoids the parsing of the commandline, and on Unix it can be
+used to run an executable while passing a different value for C<$ARGV[0]>.
+
+=item C<die_upon_destroy>
+
+If you pass a true value for this option, then destruction of the
+Proc::Background object (going out of scope, or script-end) will kill the
+process via C<< ->die >>.  Without this option, the child process continues
+running.
+
+=back
 
 =item B<pid>
 
 Returns the process ID of the created process.  This value is saved
 even if the process has already finished.
+
+=item B<command>
+
+This attribute holds the command line string that was passed to the process.
+
+=item C<exe>
+
+This attribute holds the path to the executable.
 
 =item B<alive>
 

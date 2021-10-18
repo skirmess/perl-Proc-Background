@@ -23,29 +23,30 @@ else {
 
 # Start the background process.  If it is started sucessfully, then record
 # the process id in $self->{_os_obj}.
-sub _new {
-  my $class = shift;
+sub _start {
+  my ($self, $options)= @_;
 
-  unless (@_ > 0) {
-    confess "Proc::Background::Unix::_new called with insufficient number of arguments";
+  # There are three main scenarios for how-to-exec:
+  #   * single-string command, to be handled by shell
+  #   * arrayref command, to be handled by execve
+  #   * arrayref command with 'exe' (fake argv0)
+  # and one that isn't logical:
+  #   * single-string command with exe
+  # throw an error for that last one rather than trying something awkward
+  # like splitting the command string.
+
+  my @argv;
+  my $cmd= $self->{_command};
+  my $exe= $self->{_exe};
+
+  if (ref $cmd eq 'ARRAY') {
+    @argv= @$cmd;
+    $exe= Proc::Background::_resolve_path(defined $exe? $exe : $argv[0])
+      or return;
+    $self->{_exe}= $exe;
+  } elsif (defined $exe) {
+    croak "Can't combine 'exe' option with single-string 'command', use arrayref 'command' instead.";
   }
-
-  return unless defined $_[0];
-
-  # If there is only one element in the @_ array, then it may be a
-  # command to be passed to the shell and should not be checked, in
-  # case the command sets environmental variables in the beginning,
-  # i.e. 'VAR=arg ls -l'.  If there is more than one element in the
-  # array, then check that the first element is a valid executable
-  # that can be found through the PATH and find the absolute path to
-  # the executable.  If the executable is found, then replace the
-  # first element it with the absolute path.
-  my @args = @_;
-  if (@_ > 1) {
-    $args[0] = Proc::Background::_resolve_path($args[0]) or return;
-  }
-
-  my $self = bless {}, $class;
 
   # Fork a child process.
   my $pid;
@@ -57,7 +58,11 @@ sub _new {
       last;
     } elsif (defined $pid) {
       # child
-      exec @_ or croak "$0: exec failed: $!\n";
+      if (defined $exe) {
+        exec { $exe } @argv or croak "$0: exec failed: $!\n";
+      } else {
+        exec $cmd or croak "$0: exec failed: $!\n";
+      }
     } elsif ($! == EAGAIN) {
       sleep 5;
       redo;
@@ -127,16 +132,35 @@ __END__
 
 =head1 NAME
 
-Proc::Background::Unix - Unix interface to process management
-
-=head1 SYNOPSIS
-
-Do not use this module directly.
+Proc::Background::Unix - Implementation of process management for Unix systems
 
 =head1 DESCRIPTION
 
-This is a process management class designed specifically for Unix
-operating systems.  It is not meant used except through the
-I<Proc::Background> class.  See L<Proc::Background> for more information.
+This module does not have a public interface.  Use L<Proc::Background>.
+
+=head1 IMPLEMENTATION
+
+Unix systems start a new process by creating a mirror of the current process
+(C<fork>) and then having it alter its own state to prepare for the new
+program, and then calling C<exec> to replace the running code with code loaded
+from a new file.  However, there is a second common method where the user
+wants to specify a command line string as they would type it in their shell.
+In this case, the actual program being executed is the shell, and the command
+line is given as one element of its argument list.
+
+Perl already supports both methods, such that if you pass one string to C<exec>
+containing shell characters, it calls the shell, and if you pass multiple
+arguments, it directly invokes C<exec>.
+
+This module mostly just lets Perl's C<exec> do its job, but also checks for
+the existence of the executable first, to make errors easier to catch.  This
+check is skipped if there is a single-string command line.
+
+Unix lets you run a different executable than what is listed in the first
+argument.  (this feature lets one Unix executable behave as multiple
+different programs depending on what name it sees in the first argument)
+You can use that feature by passing separate options of C<exe> and C<command>
+to this module's constructor instead of a simple list.  But, you can't mix
+a C<'exe'> option with a shell-interpreted command line string.
 
 =cut
