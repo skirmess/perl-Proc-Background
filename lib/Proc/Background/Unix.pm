@@ -58,11 +58,25 @@ sub _start {
       last;
     } elsif (defined $pid) {
       # child
-      if (defined $exe) {
-        exec { $exe } @argv or croak "$0: exec failed: $!\n";
-      } else {
-        exec $cmd or croak "$0: exec failed: $!\n";
-      }
+      eval {
+        chdir($options->{cwd}) or die "chdir($options->{cwd}): $!"
+          if defined $options->{cwd};
+
+        open STDIN, '<&', $options->{stdin} or die "Can't redirect STDIN: $!"
+          if defined $options->{stdin};
+        open STDOUT, '>&', $options->{stdout} or die "Can't redirect STDOUT: $!"
+          if defined $options->{stdout};
+        open STDERR, '>&', $options->{stderr} or die "Can't redirect STDERR: $!"
+          if defined $options->{stderr};
+
+        if (defined $exe) {
+          exec { $exe } @argv or die "$0: exec failed: $!\n";
+        } else {
+          exec $cmd or die "$0: exec failed: $!\n";
+        }
+      };
+      print STDERR $@;
+      POSIX::_exit(1);
     } elsif ($! == EAGAIN) {
       sleep 5;
       redo;

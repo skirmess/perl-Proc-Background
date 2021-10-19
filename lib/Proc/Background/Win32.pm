@@ -39,17 +39,62 @@ sub _start {
   # Windows short 8.3 format which contains no spaces.
   $exe = Proc::Background::_resolve_path($exe) or return;
   $exe = Win32::GetShortPathName($exe);
+  
+  my $cwd= '.';
+  if (defined $options->{cwd}) {
+    $cwd= $options->{cwd};
+    -d $cwd or return;
+  }
 
-  # Perl 5.004_04 cannot run Win32::Process::Create on a nonexistant
-  # hash key.
-  my $os_obj = 0;
+  # On Strawberry Perl, CreateProcess will inherit the current process STDIN/STDOUT/STDERR,
+  # but there is no way to specify them without altering the current process.
+  # So, redirect handles, then create process, then rever them.
+  my ($old_stdin, $old_stdout, $old_stderr, $err);
+  {
+    local $@;
+    eval {
+      my $inherit= 0;
+      if (defined $options->{stdin}) {
+         open $old_stdin, '<&', \*STDIN or die "Can't save STDIN: $!";
+         open STDIN, '<&', $options->{stdin} or die "Can't redirect STDIN: $!";
+         $inherit= 1;
+      }
+      if (defined $options->{stdout}) {
+         open $old_stdout, '>&', \*STDOUT or die "Can't save STDOUT: $!";
+         open STDOUT, '>&', $options->{stdout} or die "Can't redirect STDOUT: $!";
+         $inherit= 1;
+      }
+      if (defined $options->{stderr}) {
+         open $old_stderr, '>&', \*STDERR or die "Can't save STDERR: $!";
+         open STDERR, '>&', $options->{stderr} or die "Can't redirect STDERR: $!";
+         $inherit= 1;
+      }
 
-  # Create the process.
-  Win32::Process::Create($os_obj, $exe, $cmdline, 0, NORMAL_PRIORITY_CLASS, '.')
-    or return;
+      # Perl 5.004_04 cannot run Win32::Process::Create on a nonexistant
+      # hash key.
+      my $os_obj = 0;
 
-  $self->{_pid}    = $os_obj->GetProcessID;
-  $self->{_os_obj} = $os_obj;
+      # Create the process.
+      Win32::Process::Create($os_obj, $exe, $cmdline, $inherit, NORMAL_PRIORITY_CLASS, $cwd)
+        or die "CreateProcess failed";
+      $self->{_pid}    = $os_obj->GetProcessID;
+      $self->{_os_obj} = $os_obj;
+    }
+    $err= $@;
+    # Now restore handles before throwing exception
+    open STDERR, '>&', $old_stderr or warn "Can't restore STDERR: $!"
+       if defined $old_stderr;
+    open STDOUT, '>&', $old_stdout or warn "Can't restore STDOUT: $!"
+       if defined $old_stdout;
+    open STDIN, '<&', $old_stdin or warn "Can't redirect STDIN: $!"
+       if defined $old_stdin;
+  }
+  if ($self->{_os_obj}) {
+    return 1;
+  } else {
+    warn $err;
+    return 0;
+  }
 }
 
 # Reap the child.

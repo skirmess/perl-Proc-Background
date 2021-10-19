@@ -107,6 +107,7 @@ sub _resolve_path {
 # Make it a method so subclasses can override it.
 %Proc::Background::_available_options= (
   command => 1, exe => 1, die_upon_destroy => 1,
+  cwd => 1, stdin => 1, stdout => 1, stderr => 1,
 );
 
 sub _available_options {
