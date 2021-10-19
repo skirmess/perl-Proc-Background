@@ -45,11 +45,16 @@ sub _start {
 
   if (ref $cmd eq 'ARRAY') {
     @argv= @$cmd;
-    $exe= Proc::Background::_resolve_path(defined $exe? $exe : $argv[0])
-      or return $self->_fatal("Can't find executable in PATH: '$exe'");
+    ($exe, my $err) = Proc::Background::_resolve_path(defined $exe? $exe : $argv[0]);
+    return $self->_fatal($err) unless defined $exe;
     $self->{_exe}= $exe;
   } elsif (defined $exe) {
     croak "Can't combine 'exe' option with single-string 'command', use arrayref 'command' instead.";
+  }
+
+  if (defined $options->{cwd}) {
+    -d $options->{cwd}
+      or return $self->_fatal("directory does not exist: '$options->{cwd}'");
   }
 
   my ($new_stdin, $new_stdout, $new_stderr);

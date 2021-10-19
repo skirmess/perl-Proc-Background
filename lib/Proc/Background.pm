@@ -49,7 +49,7 @@ if ($is_windows) {
 sub _resolve_path {
   my $command = shift;
 
-  return unless length $command;
+  return ( undef, 'empty command string' ) unless length $command;
 
   # Make the path to the progam absolute if it isn't already.  If the
   # path is not absolute and if the path contains a directory element
@@ -66,9 +66,7 @@ sub _resolve_path {
         last;
       }
     }
-    unless (defined $path) {
-      warn "$0: no executable program located at $command\n";
-    }
+    return defined $path? ( $path, undef ) : ( undef, "no executable program located at $command" );
   } else {
     my $cwd = cwd;
     if ($command =~ /$has_dir_element_re/o) {
@@ -95,20 +93,16 @@ sub _resolve_path {
         last if defined $path;
       }
     }
-    unless (defined $path) {
-      warn "$0: cannot find absolute location of $command\n";
-    }
+    return defined $path? ( $path, undef ) : ( undef, "cannot find absolute location of $command" );
   }
-
-  $path;
 }
 
 # Define the set of allowed options, to warn about unknown ones.
 # Make it a method so subclasses can override it.
 %Proc::Background::_available_options= (
-  command => 1, exe => 1, kill_upon_destroy => 1,
+  autodie => 1, command => 1, exe => 1,
   cwd => 1, stdin => 1, stdout => 1, stderr => 1,
-  autodie => 1,
+  kill_upon_destroy => 1, die_upon_destroy => 1,
 );
 
 sub _available_options {
@@ -189,8 +183,9 @@ sub new {
 # The autodie option converts these undefs into exceptions.
 sub _fatal {
   my ($self, $message)= @_;
-  return undef unless $self->{_autodie};
-  croak $message;
+  croak $message if $self->{_autodie};
+  warn "$0: $message";
+  return undef;
 }
 
 sub DESTROY {

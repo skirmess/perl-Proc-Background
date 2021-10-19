@@ -38,14 +38,15 @@ sub _start {
   # Win32::Process::Create cannot start a process when the full
   # pathname has a space in it, convert the full pathname to the
   # Windows short 8.3 format which contains no spaces.
-  $exe = Proc::Background::_resolve_path($exe)
-    || return $self->_fatal("Executable not found in PATH: '$exe'");
+  ($exe, my $err) = Proc::Background::_resolve_path($exe);
+  return $self->_fatal($err) unless defined $exe;
   $exe = Win32::GetShortPathName($exe);
   
   my $cwd= '.';
   if (defined $options->{cwd}) {
+    -d $options->{cwd}
+      or return $self->_fatal("directory does not exist: '$options->{cwd}'");
     $cwd= $options->{cwd};
-    -d $cwd or croak "chdir($cwd): $!";
   }
 
   # On Strawberry Perl, CreateProcess will inherit the current process STDIN/STDOUT/STDERR,
