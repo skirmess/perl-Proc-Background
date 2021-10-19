@@ -356,6 +356,17 @@ __END__
   # Pass a different $ARGV[0]
   Proc::Background->new({ exe => 'busybox', command => ['true'] });
   
+  # Change directory
+  Proc::Background->new({ cwd => $source_dir, command => [qw( rsync -avxH ./ /target/ )] });
+  
+  # Redirection
+  Proc::Background->new({
+    stdin => undef,                # /dev/null or NUL
+    stdout => '/append/to/fname',  # will try to open()
+    stderr => $log_fh,             # use existing handle
+    command => \@command,
+  });
+  
   # Add an option to kill the process with die when the object is
   # DESTROYed.
   my $proc4 = Proc::Background->new({ die_upon_destroy => 1 }, $command, $arg1, $arg2);
@@ -422,6 +433,25 @@ between a command line vs. single-element argument list.
 Specify the direct path to the executable.  This can serve two purposes:
 on Win32 it avoids the parsing of the commandline, and on Unix it can be
 used to run an executable while passing a different value for C<$ARGV[0]>.
+
+=item C<stdin>, C<stdout>, C<stderr>
+
+Specify one or more overrides for the standard handles of the child.
+The value should be a Perl filehandle with an underlying system C<fileno>
+value.  As a convenience, you can pass C<undef> to open the C<NUL> device
+on Win32 or C</dev/null> on Unix.  You may also pass a plain-scalar file
+name which this module will attmept to open for reading or appending.
+
+(for anything more elaborate, see L<IPC::Run> instead)
+
+Note that on Win32, none of the parent's handles are inherited by default,
+which is the opposite on Unix.  When you specify any of these handles on
+Win32 the default will change to inherit them from the parent.
+
+=item C<cwd>
+
+Specify a path which should become the child process's current working
+directory.  The path must already exist.
 
 =item C<die_upon_destroy>
 
