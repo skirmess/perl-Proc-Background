@@ -149,7 +149,7 @@ sub _waitpid {
   return 0;
 }
 
-sub _die {
+sub _kill {
   my $self = shift;
   my @kill_sequence= @_ && ref $_[0] eq 'ARRAY'? @{ $_[0] } : qw( TERM 2 TERM 8 KILL 3 KILL 7 );
   # Try to kill the process with different signals.  Calling alive() will
@@ -158,6 +158,7 @@ sub _die {
     my $sig= shift @kill_sequence;
     my $delay= shift @kill_sequence;
     kill($sig, $self->{_os_obj});
+    next unless defined $delay;
     last if $self->_reap(1, $delay); # block before sending next signal
   }
 }

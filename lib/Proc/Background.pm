@@ -106,7 +106,7 @@ sub _resolve_path {
 # Define the set of allowed options, to warn about unknown ones.
 # Make it a method so subclasses can override it.
 %Proc::Background::_available_options= (
-  command => 1, exe => 1, die_upon_destroy => 1,
+  command => 1, exe => 1, kill_upon_destroy => 1,
   cwd => 1, stdin => 1, stdout => 1, stderr => 1,
 );
 
@@ -168,7 +168,7 @@ sub new {
   # Save the start time
   $self->{_start_time} = time;
 
-  if ($options->{die_upon_destroy}) {
+  if ($options->{kill_upon_destroy} || $options->{die_upon_destroy}) {
     $self->{_die_upon_destroy} = 1;
     # Global destruction can break this feature, because there are no guarantees
     # on which order object destructors are called.  In order to avoid that, need
@@ -189,7 +189,7 @@ sub DESTROY {
     # During a mainline exit() $? is the prospective exit code from the
     # parent program. Preserve it across any waitpid() in die()
     local $?;
-    $self->die;
+    $self->kill;
     delete $Proc::Background::_die_upon_destroy{$self+0};
   }
 }
@@ -197,7 +197,7 @@ sub DESTROY {
 END {
   # Child processes need killed before global destruction, else the
   # Win32::Process objects might get destroyed first.
-  $_->die for grep defined, values %Proc::Background::_die_upon_destroy;
+  $_->kill for grep defined, values %Proc::Background::_die_upon_destroy;
   %Proc::Background::_die_upon_destroy= ();
 }
 
@@ -257,16 +257,15 @@ sub wait {
   return $self->_reap(1, $timeout_seconds)? $self->{_exit_value} : undef;
 }
 
+sub kill { shift->die(@_) }
 sub die {
   my $self = shift;
 
   # See if the process has already died.
   return 1 unless $self->alive;
 
-  croak '->die(@kill_sequence) should have an even number of arguments'
-    if @_ & 1;
   # Kill the process using the OS specific method.
-  $self->_die(@_? ([ @_ ]) : ());
+  $self->_kill(@_? ([ @_ ]) : ());
 
   # See if the process is still alive.
   !$self->alive;
@@ -321,7 +320,7 @@ sub timeout_system {
   }
 
   my $alive = $proc->alive;
-  $proc->die if $alive;
+  $proc->kill if $alive;
 
   if (wantarray) {
     return ($proc->wait, $alive);
@@ -345,7 +344,7 @@ __END__
   my $proc1 = Proc::Background->new($command, $arg1, $arg2) || die "failed";
   my $proc2 = Proc::Background->new("$command $arg1 1>&2") || die "failed";
   if ($proc1->alive) {
-    $proc1->die;
+    $proc1->kill;
     $proc1->wait;
   }
   say 'Ran for ' . ($proc1->end_time - $proc1->start_time) . ' seconds';
@@ -367,9 +366,9 @@ __END__
     command => \@command,
   });
   
-  # Add an option to kill the process with die when the object is
+  # Add an option to kill the process when the object is
   # DESTROYed.
-  my $proc4 = Proc::Background->new({ die_upon_destroy => 1 }, $command, $arg1, $arg2);
+  my $proc4 = Proc::Background->new({ kill_upon_destroy => 1 }, $command, $arg1, $arg2);
   $proc4    = undef;
 
 =head1 DESCRIPTION
@@ -453,12 +452,13 @@ Win32 the default will change to inherit them from the parent.
 Specify a path which should become the child process's current working
 directory.  The path must already exist.
 
-=item C<die_upon_destroy>
+=item C<kill_upon_destroy>
 
 If you pass a true value for this option, then destruction of the
 Proc::Background object (going out of scope, or script-end) will kill the
-process via C<< ->die >>.  Without this option, the child process continues
-running.
+process via C<< ->kill >>.  Without this option, the child process continues
+running.  C<die_upon_destroy> is an alias for this option, used by previous
+versions of this module.
 
 =back
 
@@ -479,10 +479,10 @@ This attribute holds the path to the executable.
 
 Return 1 if the process is still active, 0 otherwise.
 
-=item B<die>, B<die(@kill_sequence)>
+=item B<kill>, B<kill(@kill_sequence)>
 
 Reliably try to kill the process.  Returns 1 if the process no longer
-exists once B<die> has completed, 0 otherwise.  This will also return
+exists once B<kill> has completed, 0 otherwise.  This will also return
 1 if the process has already died.
 
 C<@kill_sequence> is a list of actions and seconds-to-wait for that
@@ -490,8 +490,8 @@ action to end the process.  The default is C< TERM 2 TERM 8 KILL 3 KILL 7 >.
 On Unix this sends SIGTERM and SIGKILL; on Windows it just calls
 TerminateProcess (graceful termination is still a TODO).
 
-Note that C<die()> on Proc::Background 1.10 and earlier on Unix called a
-sequence of:
+Note that C<kill()> (formerly named C<die()>) on Proc::Background 1.10
+and earlier on Unix called a sequence of:
 
   ->die( ( HUP => 1 )x5, ( QUIT => 1 )x5, ( INT => 1 )x5, ( KILL => 1 )x5 );
 
@@ -500,6 +500,8 @@ interpretation, and QUIT is almost always immediately fatal and generates
 an unneeded coredump.  The new default should accomodate programs that
 acknowledge a second SIGTERM, and give enough time for it to exit on a laggy
 system while still not holding up the main script too much.
+
+C<die> is preserved as an alias for C<kill>.
 
 =item B<wait>
 

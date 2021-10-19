@@ -146,7 +146,7 @@ sub _waitpid {
   return (0, 1<<8);
 }
 
-sub _die {
+sub _kill {
   my $self = shift;
   my @kill_sequence= @_ && ref $_[0] eq 'ARRAY'? @{ $_[0] } : qw( TERM 2 TERM 8 KILL 3 KILL 7 );
 
@@ -156,6 +156,7 @@ sub _die {
     my $sig= shift @kill_sequence;
     my $delay= shift @kill_sequence;
     $sig eq 'KILL'? $self->_send_sigkill : $self->_send_sigterm;
+    next unless defined $delay;
     last if $self->_reap(1, $delay); # block before sending next signal
   }
 }
