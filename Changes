@@ -6,6 +6,7 @@
   * New options 'stdin','stdout','stderr' allow redirecting handles
   * New option 'cwd' sets initial current directory of the child
   * Renamed '->die' to '->kill' (but preserved back-compat)
+  * Add methods ->suspend and ->resume
 
 Fri July 9 07:33:00 JST 2021
 

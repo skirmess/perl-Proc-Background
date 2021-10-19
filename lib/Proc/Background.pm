@@ -249,11 +249,33 @@ sub alive {
   !$self->_reap(0);
 }
 
+sub suspended {
+  $_[0]->{_suspended}? 1 : 0
+}
+
+sub suspend {
+  my $self= shift;
+  return $self->_fatal("can't suspend, process has exited")
+    if !$self->{_os_obj};
+  $self->{_suspended} = 1 if $self->_suspend;
+  return $self->{_suspended};
+}
+
+sub resume {
+  my $self= shift;
+  return $self->_fatal("can't resume, process has exited")
+    if !$self->{_os_obj};
+  $self->{_suspended} = 0 if $self->_resume;
+  return !$self->{_suspended};
+}
+
 sub wait {
   my ($self, $timeout_seconds) = @_;
 
   # If $self->{_exit_value} exists, then we already waited.
   return $self->{_exit_value} if exists($self->{_exit_value});
+
+  carp "calling ->wait on a suspended process" if $self->{_suspended};
 
   # If neither _os_obj or _exit_value are set, then something is wrong.
   return undef if !exists($self->{_os_obj});
@@ -265,6 +287,8 @@ sub wait {
 sub kill { shift->die(@_) }
 sub die {
   my $self = shift;
+
+  croak "process is already terminated" if $self->{_autodie} && !$self->{_os_obj};
 
   # See if the process has already died.
   return 1 unless $self->alive;
@@ -382,7 +406,7 @@ This is a generic interface for placing processes in the background on
 both Unix and Win32 platforms.  This module lets you start, kill, wait
 on, retrieve exit values, and see if background processes still exist.
 
-=head1 METHODS
+=head1 CONSTRUCTOR
 
 =over 4
 
@@ -475,22 +499,98 @@ versions of this module.
 
 =back
 
+=back
+
+=head1 ATTRIBUTES
+
+=over
+
+=item B<command>
+
+The command (string or arrayref) that was passed to the constructor.
+
+=item C<exe>
+
+The path to the executable that was passed as an option to the constructor,
+or derived from the C<command>.
+
+=item B<start_time>
+
+Return the value that the Perl function time() returned when the
+process was started.
+
 =item B<pid>
 
 Returns the process ID of the created process.  This value is saved
 even if the process has already finished.
 
-=item B<command>
-
-This attribute holds the command line string that was passed to the process.
-
-=item C<exe>
-
-This attribute holds the path to the executable.
-
 =item B<alive>
 
-Return 1 if the process is still active, 0 otherwise.
+Return 1 if the process is still active, 0 otherwise.  This makes a
+non-blocking call to C<wait> to check the real status of the process if it
+has not been reaped yet.
+
+=item B<suspended>
+
+Boolean whether the process is thought to be stopped.  This does not actually
+consult the operating system, and just returns the last known status from a
+call to C<suspend> or C<resume>.  It is always false if C<alive> is false.
+
+=item B<exit_code>
+
+Returns the exit code of the process, assuming it exited cleanly.
+Returns C<undef> if the process has not exited yet, and 0 if the
+process exited with a signal (or TerminateProcess).  Since 0 is
+ambiguous, check for C<exit_signal> first.
+
+=item B<exit_signal>
+
+Returns the value of the signal the process exited with, assuming it
+died on a signal.  Returns C<undef> if it has not exited yet, and 0
+if it did not die to a signal.
+
+=item B<end_time>
+
+Return the value that the Perl function time() returned when the exit
+status was obtained from the process.
+
+=back
+
+=head1 METHODS
+
+=over
+
+=item B<wait>
+
+  $exit= $proc->wait; # blocks forever
+  $exit= $proc->wait($timeout_seconds); # since version 1.20
+
+Wait for the process to exit.  Return the exit status of the command
+as returned by wait() on the system.  To get the actual exit value,
+divide by 256 or right bit shift by 8, regardless of the operating
+system being used.  If the process never existed, this returns undef.
+This function may be called multiple times even after the process has
+exited and it will return the same exit status.
+
+Since version 1.20, you may pass an optional argument of the number of
+seconds to wait for the process to exit.  This may be fractional, and
+if it is zero then the wait will be non-blocking.  Note that on Unix
+this is implemented with L<Time::HiRes/alarm> before a call to wait(),
+so it may not be compatible with scripts that use alarm() for other
+purposes, or systems/perls that resume system calls after a signal.
+In the event of a timeout, the return will be undef.
+
+=item C<suspend>
+
+Pause the process.  This returns true if the process is stopped afterward.
+This throws an excetion if the process is not C<alive> and C<autodie> is
+enabled.
+
+=item C<resume>
+
+Resume a paused process.  This returns true if the process is not stopped
+afterward.  This throws an exception if the process is not C<alive> and
+C<autodie> is enabled.
 
 =item B<kill>, B<kill(@kill_sequence)>
 
@@ -516,48 +616,8 @@ system while still not holding up the main script too much.
 
 C<die> is preserved as an alias for C<kill>.
 
-=item B<wait>
-
-  $exit= $proc->wait; # blocks forever
-  $exit= $proc->wait($timeout_seconds); # since version 1.20
-
-Wait for the process to exit.  Return the exit status of the command
-as returned by wait() on the system.  To get the actual exit value,
-divide by 256 or right bit shift by 8, regardless of the operating
-system being used.  If the process never existed, this returns undef.
-This function may be called multiple times even after the process has
-exited and it will return the same exit status.
-
-Since version 1.20, you may pass an optional argument of the number of
-seconds to wait for the process to exit.  This may be fractional, and
-if it is zero then the wait will be non-blocking.  Note that on Unix
-this is implemented with L<Time::HiRes/alarm> before a call to wait(),
-so it may not be compatible with scripts that use alarm() for other
-purposes, or systems/perls that resume system calls after a signal.
-In the event of a timeout, the return will be undef.
-
-=item B<exit_code>
-
-Returns the exit code of the process, assuming it exited cleanly.
-Returns C<undef> if the process has not exited yet, and 0 if the
-process exited with a signal (or TerminateProcess).  Since 0 is
-ambiguous, check for C<exit_signal> first.
-
-=item B<exit_signal>
-
-Returns the value of the signal the process exited with, assuming it
-died on a signal.  Returns C<undef> if it has not exited yet, and 0
-if it did not die to a signal.
-
-=item B<start_time>
-
-Return the value that the Perl function time() returned when the
-process was started.
-
-=item B<end_time>
-
-Return the value that the Perl function time() returned when the exit
-status was obtained from the process.
+This throws an exception if the process has been reaped and C<autodie> is
+enabled.
 
 =back
 

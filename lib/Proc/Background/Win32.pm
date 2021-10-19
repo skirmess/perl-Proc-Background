@@ -148,6 +148,14 @@ sub _waitpid {
   return (0, 1<<8);
 }
 
+sub _suspend {
+  $_[0]->{_os_obj}->Suspend();
+}
+
+sub _resume {
+  $_[0]->{_os_obj}->Resume();
+}
+
 sub _kill {
   my $self = shift;
   my @kill_sequence= @_ && ref $_[0] eq 'ARRAY'? @{ $_[0] } : qw( TERM 2 TERM 8 KILL 3 KILL 7 );
