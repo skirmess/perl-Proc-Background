@@ -48,6 +48,14 @@ sub _start {
     croak "Can't combine 'exe' option with single-string 'command', use arrayref 'command' instead.";
   }
 
+  my ($new_stdin, $new_stdout, $new_stderr);
+  $new_stdin= _resolve_file_handle($options->{stdin}, '<', \*STDIN)
+    if exists $options->{stdin};
+  $new_stdout= _resolve_file_handle($options->{stdout}, '>>', \*STDOUT)
+    if exists $options->{stdout};
+  $new_stderr= _resolve_file_handle($options->{stderr}, '>>', \*STDERR)
+    if exists $options->{stderr};
+
   # Fork a child process.
   my $pid;
   {
@@ -62,12 +70,12 @@ sub _start {
         chdir($options->{cwd}) or die "chdir($options->{cwd}): $!"
           if defined $options->{cwd};
 
-        open STDIN, '<&', $options->{stdin} or die "Can't redirect STDIN: $!"
-          if defined $options->{stdin};
-        open STDOUT, '>&', $options->{stdout} or die "Can't redirect STDOUT: $!"
-          if defined $options->{stdout};
-        open STDERR, '>&', $options->{stderr} or die "Can't redirect STDERR: $!"
-          if defined $options->{stderr};
+        open STDIN, '<&', $new_stdin or die "Can't redirect STDIN: $!"
+          if defined $new_stdin;
+        open STDOUT, '>&', $new_stdout or die "Can't redirect STDOUT: $!"
+          if defined $new_stdout;
+        open STDERR, '>&', $new_stderr or die "Can't redirect STDERR: $!"
+          if defined $new_stderr;
 
         if (defined $exe) {
           exec { $exe } @argv or die "$0: exec failed: $!\n";
@@ -86,6 +94,20 @@ sub _start {
   }
 
   $self;
+}
+
+sub _resolve_file_handle {
+  my ($thing, $mode, $default)= @_;
+  if (!defined $thing) {
+    open my $fh, $mode, '/dev/null' or die "open(/dev/null): $!";
+    return $fh;
+  } elsif (ref $thing && (ref $thing eq 'GLOB' or ref($thing)->can('close'))) {
+    # use 'undef' to mean no-change
+    return (fileno($thing) == fileno($default))? undef : $thing;
+  } else {
+    open my $fh, $mode, $thing or die "open($thing): $!";
+    return $fh;
+  }
 }
 
 # Wait for the child.

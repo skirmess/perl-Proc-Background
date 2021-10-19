@@ -48,27 +48,36 @@ sub _start {
 
   # On Strawberry Perl, CreateProcess will inherit the current process STDIN/STDOUT/STDERR,
   # but there is no way to specify them without altering the current process.
-  # So, redirect handles, then create process, then rever them.
-  my ($old_stdin, $old_stdout, $old_stderr, $err);
+  # So, redirect handles, then create process, then revert them.
+  my ($inherit, $new_stdin, $old_stdin, $new_stdout, $old_stdout, $new_stderr, $old_stderr, $err);
+  if (exists $options->{stdin}) {
+    $inherit= 1;
+    $new_stdin= _resolve_file_handle($options->{stdin}, '<', \*STDIN);
+    open $old_stdin, '<&', \*STDIN or die "Can't save STDIN: $!"
+      if defined $new_stdin;
+  }
+  if (exists $options->{stdout}) {
+    $inherit= 1;
+    $new_stdout= _resolve_file_handle($options->{stdout}, '>>', \*STDOUT);
+    open $old_stdout, '>&', \*STDOUT or die "Can't save STDOUT: $!"
+      if defined $new_stdout;
+  }
+  if (exists $options->{stderr}) {
+    $inherit= 1;
+    $new_stderr= _resolve_file_handle($options->{stderr}, '>>', \*STDERR);
+    open $old_stderr, '>&', \*STDERR or die "Can't save STDERR: $!"
+      if defined $new_stderr;
+  }
+    
   {
     local $@;
     eval {
-      my $inherit= 0;
-      if (defined $options->{stdin}) {
-         open $old_stdin, '<&', \*STDIN or die "Can't save STDIN: $!";
-         open STDIN, '<&', $options->{stdin} or die "Can't redirect STDIN: $!";
-         $inherit= 1;
-      }
-      if (defined $options->{stdout}) {
-         open $old_stdout, '>&', \*STDOUT or die "Can't save STDOUT: $!";
-         open STDOUT, '>&', $options->{stdout} or die "Can't redirect STDOUT: $!";
-         $inherit= 1;
-      }
-      if (defined $options->{stderr}) {
-         open $old_stderr, '>&', \*STDERR or die "Can't save STDERR: $!";
-         open STDERR, '>&', $options->{stderr} or die "Can't redirect STDERR: $!";
-         $inherit= 1;
-      }
+      open STDIN, '<&', $new_stdin or die "Can't redirect STDIN: $!"
+        if defined $new_stdin;
+      open STDOUT, '>&', $new_stdout or die "Can't redirect STDOUT: $!"
+        if defined $new_stdout;
+      open STDERR, '>&', $new_stderr or die "Can't redirect STDERR: $!"
+        if defined $new_stderr;
 
       # Perl 5.004_04 cannot run Win32::Process::Create on a nonexistant
       # hash key.
@@ -79,14 +88,14 @@ sub _start {
         or die "CreateProcess failed";
       $self->{_pid}    = $os_obj->GetProcessID;
       $self->{_os_obj} = $os_obj;
-    }
+    };
     $err= $@;
     # Now restore handles before throwing exception
     open STDERR, '>&', $old_stderr or warn "Can't restore STDERR: $!"
        if defined $old_stderr;
     open STDOUT, '>&', $old_stdout or warn "Can't restore STDOUT: $!"
        if defined $old_stdout;
-    open STDIN, '<&', $old_stdin or warn "Can't redirect STDIN: $!"
+    open STDIN, '<&', $old_stdin or warn "Can't restore STDIN: $!"
        if defined $old_stdin;
   }
   if ($self->{_os_obj}) {
@@ -94,6 +103,19 @@ sub _start {
   } else {
     warn $err;
     return 0;
+  }
+}
+
+sub _resolve_file_handle {
+  my ($thing, $mode, $default)= @_;
+  if (!defined $thing) {
+    open my $fh, $mode, 'NUL' or die "open(NUL): $!";
+    return $fh;
+  } elsif (ref $thing && (ref $thing eq 'GLOB' or ref($thing)->can('close'))) {
+    return fileno($thing) == fileno($default)? undef : $thing;
+  } else {
+    open my $fh, $mode, $thing or die "open($thing): $!";
+    return $fh;
   }
 }
 
@@ -174,6 +196,8 @@ This module does not have a public interface.  Use L<Proc::Background>.
 
 =head1 IMPLEMENTATION
 
+=head2 Perl Fork Limitations
+
 When Perl is built as a native Win32 application, the C<fork> and C<exec> are
 a broken approximation of their Unix counterparts.  Calling C<fork> creates a
 I<thread> instead of a process, and there is no way to exit the thread without
@@ -185,6 +209,8 @@ child, so any file handle redirection you perform in the forked child will
 affect the parent and vice versa.
 
 In short, B<never> call C<fork> or C<exec> on native Win32 Perl.
+
+=head2 Command Line
 
 This module implements background processes using C<Win32::Process>, which
 uses the Windows API's concepts of C<CreateProcess>, C<TerminateProces>,
@@ -203,5 +229,19 @@ with a suffix of C<".exe"> if the original wasn't found.
 If you supply a command of multiple arguments, they are combined into a command
 line using C<Win32::ShellQuote>.  The first argument is used as the executable
 (unless you specified the C<'exe'> option), and gets the same path lookup.
+
+=head2 Initial File Handles
+
+When no options are specified, the new process does not inherit any file handles
+of the current process.  This differs from the Unix implementation, but I'm
+leaving it this way for back-compat.  If you specify any of stdin, stdout, or
+stderr, this module delivers them to the new process by temporarily redirecting
+STDIN, STDOUT, and STDERR of the current process, which the child process then
+inherits.  Any handle not specified will be inherited as-is.  If you wish to
+redirect a handle to NUL, set the option to C<undef>:
+
+  stdin  => undef,     # stdin will read from NUL device
+  stdout => $some_fh,  # stdout will write to a file handle
+  stderr => \*STDERR,  # stderr will go to the same STDERR of the current process
 
 =cut
