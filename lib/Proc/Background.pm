@@ -108,6 +108,7 @@ sub _resolve_path {
 %Proc::Background::_available_options= (
   command => 1, exe => 1, kill_upon_destroy => 1,
   cwd => 1, stdin => 1, stdout => 1, stderr => 1,
+  autodie => 1,
 );
 
 sub _available_options {
@@ -135,6 +136,7 @@ sub new {
   }
 
   my $self= bless {}, $class;
+  $self->{_autodie}= 1 if $options->{autodie};
 
   # Resolve any confusion between the 'command' option and positional @argv params.
   # Store the command in $self->{_command} so that the ::Unix and ::Win32 don't have
@@ -152,7 +154,7 @@ sub new {
     # Back-compat: maintain original API quirks
     confess "Proc::Background::new called with insufficient number of arguments"
       unless @_;
-    return unless defined $_[0];
+    return $self->_fatal('command is undefined') unless defined $_[0];
 
     # Interpret the parameters as an @argv if there is more than one,
     # or if the 'exe' option was given.
@@ -181,6 +183,14 @@ sub new {
   }
 
   return $self;
+}
+
+# The original API returns undef from the constructor in case of various errors.
+# The autodie option converts these undefs into exceptions.
+sub _fatal {
+  my ($self, $message)= @_;
+  return undef unless $self->{_autodie};
+  croak $message;
 }
 
 sub DESTROY {
@@ -419,6 +429,14 @@ as the C<exe> and the command line is built using C<Win32::ShellQuote>.
 Options:
 
 =over
+
+=item C<autodie>
+
+This module traditionally has returned C<undef> if the child could not
+be started.  Modern Perl recommends the use of exceptions for things
+like this.  This option, like Perl's L<autodie> pragma, causes all
+fatal errors in starting the process to die with exceptions instead of
+returning undef.
 
 =item C<command>
 

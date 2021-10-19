@@ -6,18 +6,22 @@ require 5.004_04;
 use strict;
 use Exporter;
 use Carp;
-use POSIX qw(:errno_h :sys_wait_h);
+use POSIX qw( :errno_h :sys_wait_h );
+
+# Test for existence of FD_CLOEXEC, needed for child-error-through-pipe trick
+my ($FD_CLOEXEC);
+eval {
+  require Fcntl;
+  $FD_CLOEXEC= Fcntl::FD_CLOEXEC();
+};
+
 # For un-explained mysterious reasons, Time::HiRes::alarm seem to misbehave on 5.10 and earlier
-if ($] >= 5.012) {
-	require Time::HiRes;
-	Time::HiRes->import('alarm');
-}
-else {
-	*alarm= sub {
-		# round up to whole seconds
+# but core alarm works fine.
+my $alarm= ($] >= 5.012)? do { require Time::HiRes; \&Time::HiRes::alarm; }
+  : sub {
+    # round up to whole seconds
 		CORE::alarm(POSIX::ceil($_[0]));
 	};
-}
 
 @Proc::Background::Unix::ISA = qw(Exporter);
 
@@ -42,7 +46,7 @@ sub _start {
   if (ref $cmd eq 'ARRAY') {
     @argv= @$cmd;
     $exe= Proc::Background::_resolve_path(defined $exe? $exe : $argv[0])
-      or return;
+      or return $self->_fatal("Can't find executable in PATH: '$exe'");
     $self->{_exe}= $exe;
   } elsif (defined $exe) {
     croak "Can't combine 'exe' option with single-string 'command', use arrayref 'command' instead.";
@@ -57,39 +61,76 @@ sub _start {
     if exists $options->{stderr};
 
   # Fork a child process.
+  my ($pipe_r, $pipe_w);
+  if ($self->{_autodie} && defined $FD_CLOEXEC) {
+    # use a pipe for the child to report exec() errors
+    pipe $pipe_r, $pipe_w or croak "pipe: $!";
+    # This pipe needs to be in the non-preserved range that doesn't exist after exec().
+    # In the edge case where a pipe received a FD less than $^F, the CLOEXEC flag isn't set.
+    # Try again on higher descriptors, then close the lower ones.
+    my @rejects;
+    while (fileno $pipe_r <= $^F or fileno $pipe_w <= $^F) {
+      push @rejects, $pipe_r, $pipe_w;
+      pipe $pipe_r, $pipe_w or croak "pipe: $!";
+    }
+  }
   my $pid;
   {
     if ($pid = fork()) {
       # parent
       $self->{_os_obj} = $pid;
       $self->{_pid}    = $pid;
+      if (defined $pipe_r) { # implies autodie enabled
+        close $pipe_w;
+        # wait for child to reply or close the pipe
+        local $SIG{PIPE}= sub {};
+        my $msg;
+        while (0 < read $pipe_r, $msg, 1024, length $msg) {}
+        close $pipe_r;
+        # If child wrote anything to the pipe, it failed to exec.
+        # Reap it before dying.
+        if (length $msg) {
+          waitpid $pid, 0;
+          croak $msg;
+        }
+      }
       last;
     } elsif (defined $pid) {
       # child
+      # Make absolutely sure nothing in this block interacts with the rest of the
+      # process state, and that flow control never skips the _exit().
       eval {
-        chdir($options->{cwd}) or die "chdir($options->{cwd}): $!"
-          if defined $options->{cwd};
+        local $SIG{__DIE__}= undef;
+        eval {
+          chdir($options->{cwd}) or die "chdir($options->{cwd}): $!\n"
+            if defined $options->{cwd};
 
-        open STDIN, '<&', $new_stdin or die "Can't redirect STDIN: $!"
-          if defined $new_stdin;
-        open STDOUT, '>&', $new_stdout or die "Can't redirect STDOUT: $!"
-          if defined $new_stdout;
-        open STDERR, '>&', $new_stderr or die "Can't redirect STDERR: $!"
-          if defined $new_stderr;
+          open STDIN, '<&', $new_stdin or die "Can't redirect STDIN: $!\n"
+            if defined $new_stdin;
+          open STDOUT, '>&', $new_stdout or die "Can't redirect STDOUT: $!\n"
+            if defined $new_stdout;
+          open STDERR, '>&', $new_stderr or die "Can't redirect STDERR: $!\n"
+            if defined $new_stderr;
 
-        if (defined $exe) {
-          exec { $exe } @argv or die "$0: exec failed: $!\n";
+          if (defined $exe) {
+            exec { $exe } @argv or die "$0: exec failed: $!\n";
+          } else {
+            exec $cmd or die "$0: exec failed: $!\n";
+          }
+        };
+        if (defined $pipe_w) {
+          print $pipe_w $@;
+          close $pipe_w; # force it to flush.  Nothing else needs closed because we are about to _exit
         } else {
-          exec $cmd or die "$0: exec failed: $!\n";
+          print STDERR $@;
         }
       };
-      print STDERR $@;
       POSIX::_exit(1);
     } elsif ($! == EAGAIN) {
       sleep 5;
       redo;
     } else {
-      return;
+      return $self->_fatal("fork: $!");
     }
   }
 
@@ -99,13 +140,13 @@ sub _start {
 sub _resolve_file_handle {
   my ($thing, $mode, $default)= @_;
   if (!defined $thing) {
-    open my $fh, $mode, '/dev/null' or die "open(/dev/null): $!";
+    open my $fh, $mode, '/dev/null' or croak "open(/dev/null): $!";
     return $fh;
   } elsif (ref $thing && (ref $thing eq 'GLOB' or ref($thing)->can('close'))) {
     # use 'undef' to mean no-change
     return (fileno($thing) == fileno($default))? undef : $thing;
   } else {
-    open my $fh, $mode, $thing or die "open($thing): $!";
+    open my $fh, $mode, $thing or croak "open($thing): $!";
     return $fh;
   }
 }
@@ -123,9 +164,9 @@ sub _waitpid {
     my $result= 0;
     if ($blocking && $wait_seconds) {
       local $SIG{ALRM}= sub { die "alarm\n" };
-      alarm($wait_seconds);
+      $alarm->($wait_seconds);
       eval { $result= waitpid($self->{_os_obj}, 0); };
-      alarm(0);
+      $alarm->(0);
     }
     else {
       $result= waitpid($self->{_os_obj}, $blocking? 0 : WNOHANG);
@@ -177,6 +218,8 @@ This module does not have a public interface.  Use L<Proc::Background>.
 
 =head1 IMPLEMENTATION
 
+=head2 Command vs. Exec
+
 Unix systems start a new process by creating a mirror of the current process
 (C<fork>) and then having it alter its own state to prepare for the new
 program, and then calling C<exec> to replace the running code with code loaded
@@ -197,7 +240,14 @@ Unix lets you run a different executable than what is listed in the first
 argument.  (this feature lets one Unix executable behave as multiple
 different programs depending on what name it sees in the first argument)
 You can use that feature by passing separate options of C<exe> and C<command>
-to this module's constructor instead of a simple list.  But, you can't mix
-a C<'exe'> option with a shell-interpreted command line string.
+to this module's constructor instead of a simple argument list.  But, you
+can't mix a C<exe> option with a shell-interpreted command line string.
+
+=head2 Errors during Exec
+
+If the C<autodie> option is enabled, and the system supports C<FD_CLOEXEC>,
+this module uses a trick where the forked child relays any errors through
+a pipe so that the parent can throw and handle the exception directly instead
+of creating a child process that is dead-on-arrival with the error on STDERR.
 
 =cut

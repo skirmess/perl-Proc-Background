@@ -6,6 +6,7 @@ require 5.004_04;
 use strict;
 use Exporter;
 use Carp;
+use Win32;
 use Win32::Process qw( NORMAL_PRIORITY_CLASS INFINITE );
 use Win32::ShellQuote ();
 
@@ -37,13 +38,14 @@ sub _start {
   # Win32::Process::Create cannot start a process when the full
   # pathname has a space in it, convert the full pathname to the
   # Windows short 8.3 format which contains no spaces.
-  $exe = Proc::Background::_resolve_path($exe) or return;
+  $exe = Proc::Background::_resolve_path($exe)
+    || return $self->_fatal("Executable not found in PATH: '$exe'");
   $exe = Win32::GetShortPathName($exe);
   
   my $cwd= '.';
   if (defined $options->{cwd}) {
     $cwd= $options->{cwd};
-    -d $cwd or return;
+    -d $cwd or croak "chdir($cwd): $!";
   }
 
   # On Strawberry Perl, CreateProcess will inherit the current process STDIN/STDOUT/STDERR,
@@ -53,30 +55,30 @@ sub _start {
   if (exists $options->{stdin}) {
     $inherit= 1;
     $new_stdin= _resolve_file_handle($options->{stdin}, '<', \*STDIN);
-    open $old_stdin, '<&', \*STDIN or die "Can't save STDIN: $!"
+    open $old_stdin, '<&', \*STDIN or croak "Can't save STDIN: $!\n"
       if defined $new_stdin;
   }
   if (exists $options->{stdout}) {
     $inherit= 1;
     $new_stdout= _resolve_file_handle($options->{stdout}, '>>', \*STDOUT);
-    open $old_stdout, '>&', \*STDOUT or die "Can't save STDOUT: $!"
+    open $old_stdout, '>&', \*STDOUT or croak "Can't save STDOUT: $!\n"
       if defined $new_stdout;
   }
   if (exists $options->{stderr}) {
     $inherit= 1;
     $new_stderr= _resolve_file_handle($options->{stderr}, '>>', \*STDERR);
-    open $old_stderr, '>&', \*STDERR or die "Can't save STDERR: $!"
+    open $old_stderr, '>&', \*STDERR or croak "Can't save STDERR: $!\n"
       if defined $new_stderr;
   }
     
   {
     local $@;
     eval {
-      open STDIN, '<&', $new_stdin or die "Can't redirect STDIN: $!"
+      open STDIN, '<&', $new_stdin or die "Can't redirect STDIN: $!\n"
         if defined $new_stdin;
-      open STDOUT, '>&', $new_stdout or die "Can't redirect STDOUT: $!"
+      open STDOUT, '>&', $new_stdout or die "Can't redirect STDOUT: $!\n"
         if defined $new_stdout;
-      open STDERR, '>&', $new_stderr or die "Can't redirect STDERR: $!"
+      open STDERR, '>&', $new_stderr or die "Can't redirect STDERR: $!\n"
         if defined $new_stderr;
 
       # Perl 5.004_04 cannot run Win32::Process::Create on a nonexistant
@@ -85,36 +87,35 @@ sub _start {
 
       # Create the process.
       Win32::Process::Create($os_obj, $exe, $cmdline, $inherit, NORMAL_PRIORITY_CLASS, $cwd)
-        or die "CreateProcess failed";
+        or die Win32::FormatMessage( Win32::GetLastError() )."\n";
       $self->{_pid}    = $os_obj->GetProcessID;
       $self->{_os_obj} = $os_obj;
     };
-    $err= $@;
+    chomp($err= $@);
     # Now restore handles before throwing exception
-    open STDERR, '>&', $old_stderr or warn "Can't restore STDERR: $!"
-       if defined $old_stderr;
-    open STDOUT, '>&', $old_stdout or warn "Can't restore STDOUT: $!"
-       if defined $old_stdout;
-    open STDIN, '<&', $old_stdin or warn "Can't restore STDIN: $!"
-       if defined $old_stdin;
+    open STDERR, '>&', $old_stderr or warn "Can't restore STDERR: $!\n"
+      if defined $old_stderr;
+    open STDOUT, '>&', $old_stdout or warn "Can't restore STDOUT: $!\n"
+      if defined $old_stdout;
+    open STDIN, '<&', $old_stdin or warn "Can't restore STDIN: $!\n"
+      if defined $old_stdin;
   }
   if ($self->{_os_obj}) {
     return 1;
   } else {
-    warn $err;
-    return 0;
+    return $self->_fatal($err);
   }
 }
 
 sub _resolve_file_handle {
   my ($thing, $mode, $default)= @_;
   if (!defined $thing) {
-    open my $fh, $mode, 'NUL' or die "open(NUL): $!";
+    open my $fh, $mode, 'NUL' or croak "open(NUL): $!";
     return $fh;
   } elsif (ref $thing && (ref $thing eq 'GLOB' or ref($thing)->can('close'))) {
     return fileno($thing) == fileno($default)? undef : $thing;
   } else {
-    open my $fh, $mode, $thing or die "open($thing): $!";
+    open my $fh, $mode, $thing or croak "open($thing): $!";
     return $fh;
   }
 }
