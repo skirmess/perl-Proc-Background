@@ -402,19 +402,11 @@ __END__
   }
   say 'Ran for ' . ($proc1->end_time - $proc1->start_time) . ' seconds';
   
-  # Throw exceptions if the process can't start
-  Proc::Background->new({ autodie => 1 }, $command);
-  
-  # Resolve ambiguity of single-argument command
-  Proc::Background->new({ command => [ $command ] });
-  
-  # Pass a different $ARGV[0]
-  Proc::Background->new({ exe => 'busybox', command => ['true'] });
-  
-  # Change directory
   Proc::Background->new({
-    cwd => $source_dir,
-    command => [qw( rsync -avxH ./ /target/ )]
+    autodie => 1,           # Throw exceptions instead of returning undef
+    cwd => 'some/path/',    # Set working directory for the new process
+    exe => 'busybox',       # Specify executable different from argv[0]
+    command => [ $command ] # resolve ambiguity of command line vs. argv[0]
   });
   
   # Set initial file handles
@@ -427,7 +419,7 @@ __END__
   
   # Automatically kill the process if the object gets destroyed
   my $proc4 = Proc::Background->new({ autoterminate => 1 }, $command);
-  $proc4    = undef;
+  $proc4    = undef;  # calls ->terminate
 
 =head1 DESCRIPTION
 
@@ -466,15 +458,16 @@ that the executable exists before calling C<fork>.
 
 =item Win32
 
-This implementation uses C<Win32::Process/CreateProcess>.  If you supply a
-single-string command line, it derives the executable by parsing the
-command line and looking for the first element in the C<PATH>, appending
-C<".exe"> if needed.  If you supply multiple arguments, the first is used
-as the C<exe> and the command line is built using C<Win32::ShellQuote>.
+This implementation uses the L<Windows CreateProcess API|Win32::Process/METHODS>.
+If you supply a single-string command line, it derives the executable by
+parsing the command line and looking for the first element in the C<PATH>,
+appending C<".exe"> if needed.  If you supply multiple arguments, the
+first is used as the C<exe> and the command line is built using
+L<Win32::ShellQuote>.
 
 =back
 
-Options:
+B<Options:>
 
 =over
 
@@ -495,7 +488,7 @@ between a command line vs. single-element argument list.
 
 =item C<exe>
 
-Specify the direct path to the executable.  This can serve two purposes:
+Specify the executable.  This can serve two purposes:
 on Win32 it avoids the parsing of the commandline, and on Unix it can be
 used to run an executable while passing a different value for C<$ARGV[0]>.
 
@@ -538,7 +531,7 @@ by previous versions of this module.
 
 The command (string or arrayref) that was passed to the constructor.
 
-=item C<exe>
+=item B<exe>
 
 The path to the executable that was passed as an option to the constructor,
 or derived from the C<command>.
@@ -614,13 +607,13 @@ so it may not be compatible with scripts that use alarm() for other
 purposes, or systems/perls that resume system calls after a signal.
 In the event of a timeout, the return will be undef.
 
-=item C<suspend>
+=item B<suspend>
 
 Pause the process.  This returns true if the process is stopped afterward.
 This throws an excetion if the process is not C<alive> and C<autodie> is
 enabled.
 
-=item C<resume>
+=item B<resume>
 
 Resume a paused process.  This returns true if the process is not stopped
 afterward.  This throws an exception if the process is not C<alive> and
@@ -681,36 +674,6 @@ returns an empty list in a list context, an undefined value in a
 scalar context, or nothing in a void context.
 
 =back
-
-=head1 IMPLEMENTATION
-
-I<Proc::Background> comes with two modules, I<Proc::Background::Unix>
-and I<Proc::Background::Win32>.  Currently, on Unix platforms
-I<Proc::Background> uses the I<Proc::Background::Unix> class and on
-Win32 platforms it uses I<Proc::Background::Win32>, which makes use of
-I<Win32::Process>.
-
-The I<Proc::Background> assigns to @ISA either
-I<Proc::Background::Unix> or I<Proc::Background::Win32>, which does
-the OS dependent work.  The OS independent work is done in
-I<Proc::Background>.
-
-Proc::Background uses two variables to keep track of the process.
-$self->{_os_obj} contains the operating system object to reference the
-process.  On a Unix systems this is the process id (pid).  On Win32,
-it is an object returned from the I<Win32::Process> class.  When
-$self->{_os_obj} exists, then the process is running.  When the
-process dies, this is recorded by deleting $self->{_os_obj} and saving
-the exit value $self->{_exit_value}.
-
-Anytime I<alive> is called, a waitpid() is called on the process and
-the return status, if any, is gathered and saved for a call to
-I<wait>.  This module does not install a signal handler for SIGCHLD.
-If for some reason, the user has installed a signal handler for
-SIGCHLD, then, then when this module calls waitpid(), the failure will
-be noticed and taken as the exited child, but it won't be able to
-gather the exit status.  In this case, the exit status will be set to
-0.
 
 =head1 SEE ALSO
 

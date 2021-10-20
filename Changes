@@ -14,8 +14,10 @@ Wed Oct 20 15:38:00 JST 2021
   * Option 'autoterminate' now has an attribute accessor and can be
     toggled on the fly.
   * New option 'autodie' throws exceptions from constructor instead
-    of returning undef.  It also allows capturing errors from exec()
-    on Unix by passing them through a pipe to the parent.
+    of returning undef.
+  * On Unix, use a pipe to capture error messages all the way through
+    to the exec() call.  Reap exec() failures without exposing the
+    forked process to the user.
   * Add methods ->suspend and ->resume
   * Mitigate bug in timeout_system where a system clock change could
     increase the wait-time indefinitely.
