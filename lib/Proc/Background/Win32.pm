@@ -52,7 +52,7 @@ sub _start {
   # On Strawberry Perl, CreateProcess will inherit the current process STDIN/STDOUT/STDERR,
   # but there is no way to specify them without altering the current process.
   # So, redirect handles, then create process, then revert them.
-  my ($inherit, $new_stdin, $old_stdin, $new_stdout, $old_stdout, $new_stderr, $old_stderr, $err);
+  my ($inherit, $new_stdin, $old_stdin, $new_stdout, $old_stdout, $new_stderr, $old_stderr);
   if (exists $options->{stdin}) {
     $inherit= 1;
     $new_stdin= _resolve_file_handle($options->{stdin}, '<', \*STDIN);
