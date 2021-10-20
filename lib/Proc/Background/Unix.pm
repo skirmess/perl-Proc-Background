@@ -67,16 +67,16 @@ sub _start {
 
   # Fork a child process.
   my ($pipe_r, $pipe_w);
-  if ($self->{_autodie} && defined $FD_CLOEXEC) {
+  if (defined $FD_CLOEXEC) {
     # use a pipe for the child to report exec() errors
-    pipe $pipe_r, $pipe_w or croak "pipe: $!";
+    pipe $pipe_r, $pipe_w or return $self->_fatal("pipe: $!");
     # This pipe needs to be in the non-preserved range that doesn't exist after exec().
     # In the edge case where a pipe received a FD less than $^F, the CLOEXEC flag isn't set.
     # Try again on higher descriptors, then close the lower ones.
     my @rejects;
     while (fileno $pipe_r <= $^F or fileno $pipe_w <= $^F) {
       push @rejects, $pipe_r, $pipe_w;
-      pipe $pipe_r, $pipe_w or croak "pipe: $!";
+      pipe $pipe_r, $pipe_w or return $self->_fatal("pipe: $!");
     }
   }
   my $pid;
@@ -85,18 +85,18 @@ sub _start {
       # parent
       $self->{_os_obj} = $pid;
       $self->{_pid}    = $pid;
-      if (defined $pipe_r) { # implies autodie enabled
+      if (defined $pipe_r) {
         close $pipe_w;
         # wait for child to reply or close the pipe
         local $SIG{PIPE}= sub {};
-        my $msg;
+        my $msg= '';
         while (0 < read $pipe_r, $msg, 1024, length $msg) {}
         close $pipe_r;
         # If child wrote anything to the pipe, it failed to exec.
         # Reap it before dying.
         if (length $msg) {
           waitpid $pid, 0;
-          croak $msg;
+          return $self->_fatal($msg);
         }
       }
       last;
