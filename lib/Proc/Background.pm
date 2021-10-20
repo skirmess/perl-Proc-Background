@@ -102,7 +102,7 @@ sub _resolve_path {
 %Proc::Background::_available_options= (
   autodie => 1, command => 1, exe => 1,
   cwd => 1, stdin => 1, stdout => 1, stderr => 1,
-  kill_upon_destroy => 1, die_upon_destroy => 1,
+  autoterminate => 1, die_upon_destroy => 1,
 );
 
 sub _available_options {
@@ -164,16 +164,8 @@ sub new {
   # Save the start time
   $self->{_start_time} = time;
 
-  if ($options->{kill_upon_destroy} || $options->{die_upon_destroy}) {
-    $self->{_die_upon_destroy} = 1;
-    # Global destruction can break this feature, because there are no guarantees
-    # on which order object destructors are called.  In order to avoid that, need
-    # to run all the ->die methods during END{}, and that requires weak
-    # references which weren't available until 5.8
-    $weaken_subref->( $Proc::Background::_die_upon_destroy{$self+0}= $self )
-      if $weaken_subref;
-    # could warn about it for earlier perl... but has been broken for 15 years and
-    # who is still using < 5.8 anyway?
+  if ($options->{autoterminate} || $options->{die_upon_destroy}) {
+    $self->autoterminate(1);
   }
 
   return $self;
@@ -188,13 +180,34 @@ sub _fatal {
   return undef;
 }
 
+sub autoterminate {
+  my ($self, $newval)= @_;
+  if (@_ > 1 and ($newval xor $self->{_die_upon_destroy})) {
+    if ($newval) {
+      # Global destruction can break this feature, because there are no guarantees
+      # on which order object destructors are called.  In order to avoid that, need
+      # to run all the ->die methods during END{}, and that requires weak
+      # references which weren't available until 5.8
+      $weaken_subref->( $Proc::Background::_die_upon_destroy{$self+0}= $self )
+        if $weaken_subref;
+      # could warn about it for earlier perl... but has been broken for 15 years and
+      # who is still using < 5.8 anyway?
+    }
+    else {
+      delete $Proc::Background::_die_upon_destroy{$self+0};
+    }
+    $self->{_die_upon_destroy}= $newval? 1 : 0;
+  }
+  $self->{_die_upon_destroy} || 0
+}
+
 sub DESTROY {
   my $self = shift;
   if ($self->{_die_upon_destroy}) {
     # During a mainline exit() $? is the prospective exit code from the
     # parent program. Preserve it across any waitpid() in die()
     local $?;
-    $self->kill;
+    $self->terminate;
     delete $Proc::Background::_die_upon_destroy{$self+0};
   }
 }
@@ -202,7 +215,10 @@ sub DESTROY {
 END {
   # Child processes need killed before global destruction, else the
   # Win32::Process objects might get destroyed first.
-  $_->kill for grep defined, values %Proc::Background::_die_upon_destroy;
+  for (grep defined, values %Proc::Background::_die_upon_destroy) {
+    $_->terminate;
+    delete $_->{_die_upon_destroy}
+  }
   %Proc::Background::_die_upon_destroy= ();
 }
 
@@ -284,7 +300,7 @@ sub wait {
   return $self->_reap(1, $timeout_seconds)? $self->{_exit_value} : undef;
 }
 
-sub kill { shift->die(@_) }
+sub terminate { shift->die(@_) }
 sub die {
   my $self = shift;
 
@@ -294,7 +310,7 @@ sub die {
   return 1 unless $self->alive;
 
   # Kill the process using the OS specific method.
-  $self->_kill(@_? ([ @_ ]) : ());
+  $self->_terminate(@_? ([ @_ ]) : ());
 
   # See if the process is still alive.
   !$self->alive;
@@ -349,7 +365,7 @@ sub timeout_system {
   }
 
   my $alive = $proc->alive;
-  $proc->kill if $alive;
+  $proc->terminate if $alive;
 
   if (wantarray) {
     return ($proc->wait, $alive);
@@ -373,10 +389,13 @@ __END__
   my $proc1 = Proc::Background->new($command, $arg1, $arg2) || die "failed";
   my $proc2 = Proc::Background->new("$command $arg1 1>&2") || die "failed";
   if ($proc1->alive) {
-    $proc1->kill;
+    $proc1->terminate;
     $proc1->wait;
   }
   say 'Ran for ' . ($proc1->end_time - $proc1->start_time) . ' seconds';
+  
+  # Throw exceptions if the process can't start
+  Proc::Background->new({ autodie => 1 }, $command);
   
   # Resolve ambiguity of single-argument command
   Proc::Background->new({ command => [ $command ] });
@@ -385,9 +404,12 @@ __END__
   Proc::Background->new({ exe => 'busybox', command => ['true'] });
   
   # Change directory
-  Proc::Background->new({ cwd => $source_dir, command => [qw( rsync -avxH ./ /target/ )] });
+  Proc::Background->new({
+    cwd => $source_dir,
+    command => [qw( rsync -avxH ./ /target/ )]
+  });
   
-  # Redirection
+  # Set initial file handles
   Proc::Background->new({
     stdin => undef,                # /dev/null or NUL
     stdout => '/append/to/fname',  # will try to open()
@@ -395,9 +417,8 @@ __END__
     command => \@command,
   });
   
-  # Add an option to kill the process when the object is
-  # DESTROYed.
-  my $proc4 = Proc::Background->new({ kill_upon_destroy => 1 }, $command, $arg1, $arg2);
+  # Automatically kill the process if the object gets destroyed
+  my $proc4 = Proc::Background->new({ autoterminate => 1 }, $command);
   $proc4    = undef;
 
 =head1 DESCRIPTION
@@ -489,13 +510,13 @@ Win32 the default will change to inherit them from the parent.
 Specify a path which should become the child process's current working
 directory.  The path must already exist.
 
-=item C<kill_upon_destroy>
+=item C<autoterminate>
 
 If you pass a true value for this option, then destruction of the
 Proc::Background object (going out of scope, or script-end) will kill the
-process via C<< ->kill >>.  Without this option, the child process continues
-running.  C<die_upon_destroy> is an alias for this option, used by previous
-versions of this module.
+process via C<< ->terminate >>.  Without this option, the child process
+continues running.  C<die_upon_destroy> is an alias for this option, used
+by previous versions of this module.
 
 =back
 
@@ -554,6 +575,11 @@ if it did not die to a signal.
 Return the value that the Perl function time() returned when the exit
 status was obtained from the process.
 
+=item B<autoterminate>
+
+This writeable attribute lets you enable or disable the autoterminate
+option, which could also be passed to the constructor.
+
 =back
 
 =head1 METHODS
@@ -592,29 +618,29 @@ Resume a paused process.  This returns true if the process is not stopped
 afterward.  This throws an exception if the process is not C<alive> and
 C<autodie> is enabled.
 
-=item B<kill>, B<kill(@kill_sequence)>
+=item B<terminate>, B<terminate(@kill_sequence)>
 
 Reliably try to kill the process.  Returns 1 if the process no longer
-exists once B<kill> has completed, 0 otherwise.  This will also return
-1 if the process has already died.
+exists once B<terminate> has completed, 0 otherwise.  This will also return
+1 if the process has already exited.
 
 C<@kill_sequence> is a list of actions and seconds-to-wait for that
 action to end the process.  The default is C< TERM 2 TERM 8 KILL 3 KILL 7 >.
 On Unix this sends SIGTERM and SIGKILL; on Windows it just calls
 TerminateProcess (graceful termination is still a TODO).
 
-Note that C<kill()> (formerly named C<die()>) on Proc::Background 1.10
+Note that C<terminate()> (formerly named C<die()>) on Proc::Background 1.10
 and earlier on Unix called a sequence of:
 
   ->die( ( HUP => 1 )x5, ( QUIT => 1 )x5, ( INT => 1 )x5, ( KILL => 1 )x5 );
 
-which didn't particularly make a lot of sense, since SIGHUP is open to
-interpretation, and QUIT is almost always immediately fatal and generates
-an unneeded coredump.  The new default should accomodate programs that
-acknowledge a second SIGTERM, and give enough time for it to exit on a laggy
-system while still not holding up the main script too much.
+which wasn't what most people need, since SIGHUP is open to interpretation,
+and QUIT is almost always immediately fatal and generates a coredump.
+The new default should accomodate programs that acknowledge a second
+SIGTERM, and give enough time for it to exit on a laggy system while still
+not holding up the main script too much.
 
-C<die> is preserved as an alias for C<kill>.
+C<die> is preserved as an alias for C<terminate>.
 
 This throws an exception if the process has been reaped and C<autodie> is
 enabled.
@@ -630,12 +656,7 @@ enabled.
 =item B<timeout_system> 'I<timeout> I<command> [I<arg> [I<arg>...]]'
 
 Run a command for I<timeout> seconds and if the process did not exit,
-then kill it.  While the timeout is implemented using sleep(), this
-function makes sure that the full I<timeout> is reached before killing
-the process.  B<timeout_system> does not wait for the complete
-I<timeout> number of seconds before checking if the process has
-exited.  Rather, it sleeps repeatidly for 1 second and checks to see
-if the process still exists.
+then kill it.
 
 In a scalar context, B<timeout_system> returns the exit status from
 the process.  In an array context, B<timeout_system> returns a two

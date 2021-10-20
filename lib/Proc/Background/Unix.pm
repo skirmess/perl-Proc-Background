@@ -203,7 +203,7 @@ sub _resume {
   kill CONT => $_[0]->{_os_obj};
 }
 
-sub _kill {
+sub _terminate {
   my $self = shift;
   my @kill_sequence= @_ && ref $_[0] eq 'ARRAY'? @{ $_[0] } : qw( TERM 2 TERM 8 KILL 3 KILL 7 );
   # Try to kill the process with different signals.  Calling alive() will
