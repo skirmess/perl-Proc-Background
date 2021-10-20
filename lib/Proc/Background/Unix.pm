@@ -147,7 +147,7 @@ sub _resolve_file_handle {
   if (!defined $thing) {
     open my $fh, $mode, '/dev/null' or croak "open(/dev/null): $!";
     return $fh;
-  } elsif (ref $thing && (ref $thing eq 'GLOB' or ref($thing)->can('close'))) {
+  } elsif (ref $thing) {
     # use 'undef' to mean no-change
     return (fileno($thing) == fileno($default))? undef : $thing;
   } else {
