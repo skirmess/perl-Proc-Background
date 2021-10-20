@@ -359,9 +359,17 @@ sub timeout_system {
   my $proc = Proc::Background->new(@_) or return;
   my $end_time = $proc->start_time + $timeout;
   my $delay= $timeout;
-  while ($delay > 0 && !defined $proc->exit_code) {
-    $proc->wait($delay);
-    $delay= $end_time - time;
+  while ($delay > 0 && defined $proc->{_os_obj}) {
+    last if defined $proc->wait($delay);
+    # If it times out, it's likely that wait() already waited the entire duration.
+    # But, if it got interrupted, there might be time remaining.
+    # But, if the system clock changes, this could break horribly.  Constrain it to a sane value.
+    my $t= time;
+    if ($t < $end_time - $delay) { # time moved backward!
+      $end_time= $t + $delay;
+    } else {
+      $delay= $end_time - $t;
+    }
   }
 
   my $alive = $proc->alive;
