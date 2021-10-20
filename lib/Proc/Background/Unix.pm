@@ -179,6 +179,7 @@ sub _waitpid {
 
     # Process finished.  Grab the exit value.
     if ($result == $self->{_os_obj}) {
+      delete $self->{_suspended};
       return (0, $?);
     }
     # Process already reaped.  We don't know the exist status.

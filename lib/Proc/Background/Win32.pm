@@ -132,6 +132,7 @@ sub _waitpid {
   my $result = $self->{_os_obj}->Wait($wait_seconds? int($wait_seconds * 1000) : $blocking ? INFINITE : 0);
   # Process finished.  Grab the exit value.
   if ($result == 1) {
+    delete $self->{_suspended};
     my $exit_code;
     $self->{_os_obj}->GetExitCode($exit_code);
     if ($exit_code == 256 && $self->{_called_terminateprocess}) {
