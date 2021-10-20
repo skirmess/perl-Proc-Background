@@ -1,23 +1,26 @@
 sudo: false
 language: perl
 perl:
-  - dev         # latest point release
+#  - dev         # latest point release
   - "5.32"
   - "5.26"
+  - "5.24-shrplib"
   - "5.20"
   - "5.14"
-  - "5.10"
-  - "5.8"
-  - "5.6"
-#before_install:
-#  - git clone git://github.com/travis-perl/helpers ~/travis-perl-helpers
-#  - source ~/travis-perl-helpers/init
+#  - "5.10"
+#  - "5.8"   # supposedly supported, but not working
+#  - "5.6"   # unsupported
+before_install:
+  - git clone git://github.com/travis-perl/helpers ~/travis-perl-helpers
+  - source ~/travis-perl-helpers/init
 #  - build-perl
-#  - perl -V
-#  - build-dist
-#  - cd $BUILD_DIR
-#install:
-#  - cpan-install --deps
+  - perlbrew list
+  - perl -V
+  - build-dist
+  - cd $BUILD_DIR
+install:
+  - cpanm --installdeps --notest .
+  #|| cat /home/travis/.cpanm/work/*/build.log
 script:
   - perl Makefile.PL
   - make
