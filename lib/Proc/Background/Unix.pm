@@ -7,6 +7,7 @@ use strict;
 use Exporter;
 use Carp;
 use POSIX qw( :errno_h :sys_wait_h );
+use File::Temp ();
 
 # Test for existence of FD_CLOEXEC, needed for child-error-through-pipe trick
 my ($FD_CLOEXEC);
@@ -55,6 +56,14 @@ sub _start {
   if (defined $options->{cwd}) {
     -d $options->{cwd}
       or return $self->_fatal("directory does not exist: '$options->{cwd}'");
+  }
+
+  for my $desc (qw(out err)) {
+    if (ref $options->{"std$desc"} eq 'SCALAR' || ref $options->{"std$desc"} eq 'ARRAY') {
+      my $fh = File::Temp->new();
+      $self->{"_std$desc"} = [ $options->{"std$desc"}, $fh];
+      $options->{"std$desc"} = $fh;
+    }
   }
 
   my ($new_stdin, $new_stdout, $new_stderr);

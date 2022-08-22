@@ -297,7 +297,25 @@ sub wait {
   return undef if !exists($self->{_os_obj});
 
   # Otherwise, wait for the process to finish.
-  return $self->_reap(1, $timeout_seconds)? $self->{_exit_value} : undef;
+  return undef if !$self->_reap(1, $timeout_seconds);
+
+  for my $desc (qw(out err)) {
+    if (ref $self->{"_std$desc"} eq 'ARRAY') {
+      my $fh = $self->{"_std$desc"}[1];
+      $fh->seek(0,0) or die "seek(): $!";
+
+      if (ref $self->{"_std$desc"}[0] eq 'ARRAY') {
+        @{$self->{"_std$desc"}[0]} = <$fh>;
+        chomp @{$self->{"_std$desc"}[0]};
+      }
+      else {
+        local $/;
+        ${$self->{"_std$desc"}[0]} = <$fh>;
+      }
+    }
+  }
+
+  return $self->{_exit_value};
 }
 
 sub terminate { shift->die(@_) }
