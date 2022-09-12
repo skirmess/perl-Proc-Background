@@ -191,6 +191,18 @@ if ($p6) {
   ok(0);							# 43
 }
 
+sub is_process_running {
+  my ($pid) = @_;
+  return kill(0, $pid) if $^O ne 'MSWin32';
+  # Win32 is loaded by Proc::Background as long as we're on Windows
+  my $inherit;
+  my $os_obj;
+  Win32::Process::Open($os_obj, $pid, $inherit);
+  my $exit_code;
+  $os_obj->GetExitCode($exit_code);
+  return $exit_code == Win32::Process::STILL_ACTIVE() ? 1 : 0;
+}
+
 # Test to make sure that the process is killed when the
 # Proc::Background object goes out of scope.
 $options{die_upon_destroy} = 1;
@@ -201,11 +213,11 @@ $options{die_upon_destroy} = 1;
     my $pid = $p7->pid;
     ok(defined $pid);						# 45
     sleep 1;
-    ok(kill(0, $pid) == 1);					# 46
+    ok(is_process_running($pid) == 1);					# 46
     $p7 = undef;
     # sleep up to 10 seconds waiting for the process id to stop being valid
     my $kill= 1;
-    for (1..10) { sleep 1; last if !($kill=kill(0, $pid)); }
+    for (1..10) { sleep 1; last if !($kill=is_process_running($pid)); }
     ok($kill == 0);					# 47
   } else {
     ok(0);							# 45
